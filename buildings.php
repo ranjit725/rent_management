@@ -1,45 +1,39 @@
 <?php
 require_once 'config/master.php';
 
-// ================== HANDLE FORM SUBMIT ==================
+// Handle POST request for both Add and Edit
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $building_id = (int)($_POST['building_id'] ?? 0);
 
-    $result = createBuilding($_POST);
-
-    if ($result['status'] === 'success') {
-
-        // Set flash message
-        $_SESSION['flash_message'] = [
-            'type'    => 'success',
-            'message' => 'Building added successfully!'
-        ];
-
-        header("Location: buildings.php");
-        exit;
+    if ($building_id > 0) {
+        $result = updateBuilding($_POST, $building_id);
     } else {
-
-        // Store error + old input
-        $_SESSION['flash_message'] = [
-            'type'    => 'danger',
-            'message' => $result['message'] ?? 'Something went wrong!'
-        ];
-
-        $_SESSION['old_input'] = $_POST;
-
-        header("Location: buildings.php");
-        exit;
+        $result = createBuilding($_POST);
     }
+
+    $_SESSION['flash_message'] = $result; // Use consistent key
+    header("Location: buildings.php");
+    exit;
 }
 
-// ================== FETCH DATA ==================
-$buildings = getBuildings();
+// Handle Delete Request
+if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
+    $building_id = (int)$_GET['id'];
+    $result = deleteBuilding($building_id);
+    $_SESSION['flash_message'] = $result;
+    header("Location: buildings.php");
+    exit;
+}
+
+// Fetch data
+ $buildings = getBuildings();
 
 // Get flash message if exists
-$flash = $_SESSION['flash_message'] ?? null;
+ $message = $_SESSION['flash_message'] ?? null;
 unset($_SESSION['flash_message']);
 
-// Get old input if exists
-$old = $_SESSION['old_input'] ?? [];
+// Get old input if exists (for form repopulation on error)
+ $old = $_SESSION['old_input'] ?? [];
 unset($_SESSION['old_input']);
 ?>
 
@@ -53,9 +47,9 @@ unset($_SESSION['old_input']);
 
     <h3 class="mb-4">Buildings</h3>
 
-    <?php if ($flash): ?>
-        <div class="alert alert-<?= htmlspecialchars($flash['type']) ?>">
-            <?= htmlspecialchars($flash['message']) ?>
+    <?php if ($message): ?>
+        <div class="alert alert-<?= $message['status'] === 'success' ? 'success' : 'danger' ?>">
+            <?= $message['status'] === 'success' ? ($message['message'] ?? 'Operation successful!') : $message['message'] ?>
         </div>
     <?php endif; ?>
 
@@ -64,14 +58,16 @@ unset($_SESSION['old_input']);
 
             <div class="card shadow-sm">
                 <div class="card-body">
-                    <h5>Add Building</h5>
+                    <h5 id="formTitle">Add Building</h5>
 
-                    <form method="POST">
+                    <form method="POST" id="buildingForm">
+                        <input type="hidden" name="building_id" id="building_id">
 
                         <div class="mb-3">
                             <label class="form-label">Building Name</label>
                             <input type="text"
                                    name="building_name"
+                                   id="building_name"
                                    class="form-control"
                                    value="<?= htmlspecialchars($old['building_name'] ?? '') ?>"
                                    required>
@@ -80,10 +76,11 @@ unset($_SESSION['old_input']);
                         <div class="mb-3">
                             <label class="form-label">Address</label>
                             <textarea name="address"
+                                      id="address"
                                       class="form-control"><?= htmlspecialchars($old['address'] ?? '') ?></textarea>
                         </div>
 
-                        <button type="submit" class="btn btn-primary w-100">
+                        <button type="submit" class="btn btn-primary w-100" id="submitBtn">
                             Add Building
                         </button>
 
@@ -99,12 +96,13 @@ unset($_SESSION['old_input']);
                 <div class="card-body">
                     <h5>Building List</h5>
 
-                    <table class="table table-bordered mt-3">
+                    <table class="table table-bordered mt-3" id="buildingsTable">
                         <thead>
                             <tr>
                                 <th>ID</th>
                                 <th>Name</th>
                                 <th>Address</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -114,11 +112,19 @@ unset($_SESSION['old_input']);
                                         <td><?= (int)$b['id'] ?></td>
                                         <td><?= htmlspecialchars($b['name']) ?></td>
                                         <td><?= htmlspecialchars($b['address']) ?></td>
+                                        <td>
+                                            <button class="btn btn-sm btn-warning" onclick="editBuilding(<?= htmlspecialchars(json_encode($b)) ?>)">
+                                                <i class="fa fa-edit"></i>
+                                            </button>
+                                            <a href="?action=delete&id=<?= (int)$b['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">
+                                                <i class="fa fa-trash"></i>
+                                            </a>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="3" class="text-center">No buildings found.</td>
+                                    <td colspan="4" class="text-center">No buildings found.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>

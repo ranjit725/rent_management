@@ -1,4 +1,42 @@
 <?php
+
+function buildingsJS() {
+    ?>
+    <script>
+        $(document).ready(function() {
+            // Initialize DataTable
+            $('#buildingsTable').DataTable({
+                responsive: true,
+                scrollX: true,
+                autoWidth: false
+            });
+        });
+
+        // Function to open modal and pre-fill form for editing
+        window.editBuilding = function(b) {
+            $('#formTitle').text('Edit Building');
+            $('#building_id').val(b.id);
+            $('#building_name').val(b.name);
+            $('#address').val(b.address);
+            $('#submitBtn').text('Update Building');
+        }
+
+        // Function to reset form to "Add" mode
+        window.openAddBuildingForm = function() {
+            $('#formTitle').text('Add Building');
+            $('#buildingForm')[0].reset();
+            $('#building_id').val('');
+            $('#submitBtn').text('Add Building');
+        }
+
+        // You can call this function when you want to reset the form, for example, after a successful submission.
+        // For now, the page reload handles the reset.
+    </script>
+    <?php
+}
+?>
+
+<?php
 function tenantsJS() {
     ?>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>

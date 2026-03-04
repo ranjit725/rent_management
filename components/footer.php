@@ -10,7 +10,7 @@ switch(basename($_SERVER['PHP_SELF'])) {
         if(function_exists('tenantsJS')) tenantsJS();
         break;
     case "buildings.php":
-        // buildingsJS(); // create when needed
+        if(function_exists('buildingsJS')) buildingsJS(); 
         break;
     case "units.php":
         // unitsJS(); // create when needed

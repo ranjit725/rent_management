@@ -70,6 +70,41 @@ function createUnit(array $data): array
     }
 }
 
+// Add to config/master.php
+
+function updateBuilding(array $data, int $id): array
+{
+    $db = DB::getInstance();
+    $sql = "UPDATE buildings SET name=:name, address=:address WHERE id=:id";
+    $params = [
+        ':name'    => getInput($data, 'building_name'),
+        ':address' => getInput($data, 'address'),
+        ':id'      => $id
+    ];
+    try {
+        $db->query($sql, $params);
+        return ['status' => 'success', 'message' => 'Building updated successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => $e->getMessage()];
+    }
+}
+
+function deleteBuilding(int $id): array
+{
+    $db = DB::getInstance();
+    $sql = "DELETE FROM buildings WHERE id=:id";
+    try {
+        $db->query($sql, [':id' => $id]);
+        return ['status' => 'success', 'message' => 'Building deleted successfully!'];
+    } catch (Exception $e) {
+        // Prevent deletion if building has units
+        if (str_contains($e->getMessage(), 'Integrity constraint violation')) {
+            return ['status' => 'error', 'message' => 'Cannot delete building with existing units.'];
+        }
+        return ['status' => 'error', 'message' => $e->getMessage()];
+    }
+}
+
 function getUnits(): array
 {
     $db = DB::getInstance();
