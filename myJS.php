@@ -81,6 +81,26 @@ function tenantsJS() {
 
     <script>
         $(document).ready(function() {
+            // Enable/disable effective_to based on unit selection
+            function toggleEffectiveTo() {
+                const unitSelected = $('#unit_id').val() !== "";
+                $('#effective_to').prop('disabled', !unitSelected);
+                if (!unitSelected) {
+                    $('#effective_to').val('');
+                }
+            }
+            $('#unit_id').on('change', toggleEffectiveTo);
+            toggleEffectiveTo(); // Initial check
+
+            // Form submission validation
+            $('#tenantForm').on('submit', function(e){
+                let mobileVal = $('#mobile').val().trim();
+                if(mobileVal && !/^[6-9]\d{9}$/.test(mobileVal)){
+                    alert('Mobile number must be a valid 10-digit number starting with 6-9.');
+                    e.preventDefault();
+                }
+            });
+
             $('#tenantsTable').DataTable({
                 responsive: true,
                 scrollX: true,
@@ -89,16 +109,34 @@ function tenantsJS() {
         });
 
         window.editTenant = function(t) {
+            // Populate all form fields
             $('#formTitle').text('Edit Tenant');
             $('#tenant_id').val(t.id);
             $('#name').val(t.name);
             $('#mobile').val(t.mobile);
-            $('#id_proof').val(t.id_proof);
             $('#status').val(t.status);
 
-            // Pre-fill unit assignment
-            $('#unit_id').val(t.unit_id || '');
-            $('#effective_from').val(t.assigned_from || '');
+            // Handle the ID proof file display
+            const proofContainer = $('#currentProofContainer');
+            proofContainer.empty();
+            if (t.id_proof) {
+                proofContainer.html(`<br><small>Current file: <a href="uploads/id_proofs/${t.id_proof}" target="_blank">${t.id_proof}</a></small>`);
+            }
+
+            // Populate unit assignment fields
+            if (t.unit_id) {
+                $('#unit_id').val(t.unit_id);
+                $('#effective_from').val(t.effective_from);
+                $('#effective_to').val(t.effective_to || '');
+            } else {
+                $('#unit_id').val('');
+                $('#effective_from').val('');
+                $('#effective_to').val('');
+            }
+
+            // Set the correct state for effective_to field
+            const unitSelected = $('#unit_id').val() !== "";
+            $('#effective_to').prop('disabled', !unitSelected);
 
             $('#submitBtn').text('Update Tenant');
         }
@@ -107,6 +145,8 @@ function tenantsJS() {
             $('#formTitle').text('Add Tenant');
             $('#tenantForm')[0].reset();
             $('#tenant_id').val('');
+            $('#currentProofContainer').empty();
+            $('#effective_to').prop('disabled', true);
             $('#submitBtn').text('Add Tenant');
         }
     </script>

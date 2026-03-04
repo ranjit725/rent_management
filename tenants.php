@@ -109,6 +109,21 @@ unset($_SESSION['old_input']);
                             <input type="date" name="effective_from" id="effective_from" class="form-control" value="<?= $old['effective_from'] ?? date('Y-m-d') ?>">
                         </div>
 
+                        <div class="mb-3">
+                            <label class="form-label">Effective To</label>
+                            <input type="date" name="effective_to" id="effective_to" class="form-control" value="<?= $old['effective_to'] ?? '' ?>" <?= (empty($old['unit_id'])) ? 'disabled' : '' ?>>
+                            <small class="form-text text-muted">Leave blank if this is an ongoing assignment.</small>
+                        </div>
+
+                        <hr>
+                        <h6>ID Proof</h6>
+                        <div class="mb-3">
+                            <label class="form-label">ID Proof (optional)</label>
+                            <input type="file" name="id_proof" id="id_proof" accept="image/*,application/pdf" capture="camera" class="form-control">
+                            <small class="form-text text-muted">Accepted: Images or PDF</small>
+                            <div id="currentProofContainer"></div>
+                        </div>
+
                         <button type="submit" class="btn btn-primary w-100" id="submitBtn">
                             Add Tenant
                         </button>
@@ -137,41 +152,49 @@ unset($_SESSION['old_input']);
                             </tr>
                         </thead>
                         <tbody>
-                            <?php if (!empty($tenants)): ?>
-                                <?php foreach ($tenants as $t): ?>
-                                    <tr>
-                                        <td><?= (int)$t['id'] ?></td>
-                                        <td><?= htmlspecialchars($t['name']) ?></td>
-                                        <td><?= htmlspecialchars($t['mobile'] ?? '') ?></td>
-                                        <td>
-                                            <?php if ($t['unit_name']): ?>
-                                                <?= htmlspecialchars($t['building_name'] . ' - ' . $t['unit_name']) ?>
-                                                <br><small class="text-muted">Since: <?= $t['assigned_from'] ?></small>
-                                            <?php else: ?>
-                                                <span class="text-muted">Not Assigned</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-<?= $t['status'] === 'active' ? 'success' : 'secondary' ?>">
-                                                <?= htmlspecialchars($t['status']) ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <button class="btn btn-sm btn-warning" onclick="editTenant(<?= htmlspecialchars(json_encode($t)) ?>)">
-                                                <i class="fa fa-edit"></i>
-                                            </button>
-                                            <a href="?action=delete&id=<?= (int)$t['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">
-                                                <i class="fa fa-trash"></i>
-                                            </a>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
+    <?php if (!empty($tenants)): ?>
+        <?php foreach ($tenants as $t): ?>
+            <tr>
+                <td><?= htmlspecialchars($t['name']) ?></td>
+                <td><?= htmlspecialchars($t['mobile']) ?></td>
+                <td>
+                    <?php if ($t['unit_id']): ?>
+                        <strong><?= htmlspecialchars($t['building_name'] . ' - ' . $t['unit_name']) ?></strong>
+                        <br>
+                        <small class="text-muted">
+                            From: <?= htmlspecialchars(date('M j, Y', strtotime($t['effective_from']))) ?>
+                            <?php if ($t['effective_to']): ?>
+                                <br>To: <?= htmlspecialchars(date('M j, Y', strtotime($t['effective_to']))) ?>
+                                <span class="badge bg-danger ms-1">Past</span>
                             <?php else: ?>
-                                <tr>
-                                    <td colspan="6" class="text-center">No tenants found.</td>
-                                </tr>
+                                <span class="badge bg-success ms-1">Current</span>
                             <?php endif; ?>
-                        </tbody>
+                        </small>
+                    <?php else: ?>
+                        <span class="text-muted">Not Assigned</span>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <span class="badge bg-<?= $t['status'] === 'active' ? 'success' : 'secondary' ?>">
+                        <?= htmlspecialchars(ucfirst($t['status'])) ?>
+                    </span>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-warning" onclick="editTenant(<?= htmlspecialchars(json_encode($t)) ?>)">
+                        <i class="fa fa-edit"></i>
+                    </button>
+                    <a href="?action=delete&id=<?= (int)$t['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">
+                        <i class="fa fa-trash"></i>
+                    </a>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+    <?php else: ?>
+        <tr>
+            <td colspan="5" class="text-center">No tenants found.</td>
+        </tr>
+    <?php endif; ?>
+</tbody>
                     </table>
 
                 </div>

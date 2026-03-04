@@ -154,38 +154,82 @@ function deleteUnit(int $id): array
 
 
 // ======== Tenants ========
-// In config/master.php
-
-// --- MODIFIED createTenant ---
-function createTenant(array $data): array
+function getTenantsWithUnit(): array
 {
     $db = DB::getInstance();
-    $sql_tenant = "INSERT INTO tenants (name, mobile, id_proof, status) VALUES (:name, :mobile, :id_proof, :status)";
-    $params_tenant = [
-        ':name'     => getInput($data, 'name'),
-        ':mobile'   => getInput($data, 'mobile'),
-        ':id_proof' => getInput($data, 'id_proof'),
-        ':status'   => getInput($data, 'status', 'active')
-    ];
+    $sql = "
+        SELECT 
+            t.id, t.name, t.mobile, t.status, t.id_proof,
+            m.id as mapping_id, m.unit_id, m.effective_from, m.effective_to,
+            u.unit_name, u.building_name
+        FROM tenants t
+        LEFT JOIN tenant_unit_mapping m ON t.id = m.tenant_id
+        LEFT JOIN units u ON m.unit_id = u.id
+        WHERE m.id = (
+            SELECT sub_m.id FROM tenant_unit_mapping sub_m 
+            WHERE sub_m.tenant_id = t.id 
+            ORDER BY sub_m.effective_from DESC, sub_m.id DESC 
+            LIMIT 1
+        )
+        ORDER BY t.name ASC
+    ";
+    return $db->query($sql)->fetchAll();
+}
 
+/**
+ * Creates a new tenant and assigns them to a unit with a date range.
+ */
+function createTenant(array $data, array $file_data): array
+{
+    $db = DB::getInstance();
+    
+    // 1. Validate Mobile Number
+    $mobile = getInput($data, 'mobile');
+    if ($mobile && !preg_match('/^[6-9]\d{9}$/', $mobile)) {
+        return ['status' => 'error', 'message' => 'Mobile number must be a valid 10-digit number starting with 6-9.'];
+    }
+
+    // 2. Handle File Upload
+    $upload_result = handleIdProofUpload($file_data['id_proof'] ?? null);
+    if ($upload_result['status'] === 'error') {
+        return $upload_result;
+    }
+    $id_proof_filename = $upload_result['status'] === 'success' ? $upload_result['filename'] : null;
+
+    // 3. Validate Assignment Dates
+    $unit_id = (int)getInput($data, 'unit_id');
+    $effective_from = getInput($data, 'effective_from');
+    $effective_to = getInput($data, 'effective_to');
+
+    if ($unit_id > 0) {
+        if (empty($effective_from)) {
+            return ['status' => 'error', 'message' => 'Effective From date is required when assigning a unit.'];
+        }
+        if (!empty($effective_to) && $effective_to < $effective_from) {
+            return ['status' => 'error', 'message' => 'Effective To date cannot be before Effective From date.'];
+        }
+    }
+    
     try {
         $db->beginTransaction();
 
-        $db->query($sql_tenant, $params_tenant);
+        // Create tenant record
+        $db->query("INSERT INTO tenants (name, mobile, id_proof, status) VALUES (:name, :mobile, :id_proof, :status)", [
+            ':name'     => getInput($data, 'name'),
+            ':mobile'   => $mobile,
+            ':id_proof' => $id_proof_filename,
+            ':status'   => getInput($data, 'status', 'active')
+        ]);
         $tenant_id = $db->lastInsertId();
 
-        // If a unit is assigned, create the mapping
-        $unit_id = (int)getInput($data, 'unit_id');
-        $effective_from = getInput($data, 'effective_from');
-
+        // Create unit mapping if a unit was selected
         if ($tenant_id && $unit_id > 0 && !empty($effective_from)) {
-            $sql_mapping = "INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from) VALUES (:tenant_id, :unit_id, :effective_from)";
-            $params_mapping = [
+            $db->query("INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from, effective_to) VALUES (:tenant_id, :unit_id, :effective_from, :effective_to)", [
                 ':tenant_id'      => $tenant_id,
                 ':unit_id'        => $unit_id,
-                ':effective_from' => $effective_from
-            ];
-            $db->query($sql_mapping, $params_mapping);
+                ':effective_from' => $effective_from,
+                ':effective_to'   => !empty($effective_to) ? $effective_to : null
+            ]);
         }
 
         $db->commit();
@@ -193,73 +237,98 @@ function createTenant(array $data): array
 
     } catch (Exception $e) {
         $db->rollBack();
-        return ['status' => 'error', 'message' => $e->getMessage()];
+        if ($id_proof_filename && file_exists('uploads/id_proofs/' . $id_proof_filename)) {
+            unlink('uploads/id_proofs/' . $id_proof_filename);
+        }
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
     }
 }
 
-// --- NEW FUNCTIONS ---
-
-function getTenantsWithUnit(): array
+/**
+ * Updates a tenant's details and handles unit moves or date edits.
+ */
+function updateTenant(array $data, array $file_data, int $id): array
 {
     $db = DB::getInstance();
-    $sql = "SELECT
-                t.*,
-                tum.effective_from as assigned_from,
-                u.unit_name,
-                u.building_id,
-                b.name as building_name
-            FROM tenants t
-            LEFT JOIN tenant_unit_mapping tum ON t.id = tum.tenant_id AND tum.effective_to IS NULL
-            LEFT JOIN units u ON tum.unit_id = u.id
-            LEFT JOIN buildings b ON u.building_id = b.id
-            ORDER BY t.created_at DESC";
-    return $db->query($sql)->fetchAll();
-}
+    
+    // 1. Validate Mobile Number
+    $mobile = getInput($data, 'mobile');
+    if ($mobile && !preg_match('/^[6-9]\d{9}$/', $mobile)) {
+        return ['status' => 'error', 'message' => 'Mobile number must be a valid 10-digit number starting with 6-9.'];
+    }
 
-function updateTenant(array $data, int $id): array
-{
-    $db = DB::getInstance();
-    $sql_tenant = "UPDATE tenants SET name=:name, mobile=:mobile, id_proof=:id_proof, status=:status WHERE id=:id";
-    $params_tenant = [
-        ':name'     => getInput($data, 'name'),
-        ':mobile'   => getInput($data, 'mobile'),
-        ':id_proof' => getInput($data, 'id_proof'),
-        ':status'   => getInput($data, 'status', 'active'),
-        ':id'       => $id
-    ];
+    // 2. Handle File Upload
+    $current_tenant = $db->query("SELECT id_proof FROM tenants WHERE id = :id", [':id' => $id])->fetch();
+    if (!$current_tenant) return ['status' => 'error', 'message' => 'Tenant not found.'];
+    
+    $upload_result = handleIdProofUpload($file_data['id_proof'] ?? null, $current_tenant['id_proof']);
+    if ($upload_result['status'] === 'error') {
+        return $upload_result;
+    }
+    $id_proof_filename = $upload_result['status'] === 'success' ? $upload_result['filename'] : $current_tenant['id_proof'];
+
+    // 3. Validate Assignment Dates
+    $new_unit_id = (int)getInput($data, 'unit_id');
+    $effective_from = getInput($data, 'effective_from');
+    $effective_to = getInput($data, 'effective_to');
+
+    if ($new_unit_id > 0) {
+        if (empty($effective_from)) {
+            return ['status' => 'error', 'message' => 'Effective From date is required when assigning a unit.'];
+        }
+        if (!empty($effective_to) && $effective_to < $effective_from) {
+            return ['status' => 'error', 'message' => 'Effective To date cannot be before Effective From date.'];
+        }
+    }
 
     try {
         $db->beginTransaction();
 
-        // 1. Update tenant details
-        $db->query($sql_tenant, $params_tenant);
+        // Update tenant core details
+        $db->query("UPDATE tenants SET name=:name, mobile=:mobile, id_proof=:id_proof, status=:status WHERE id=:id", [
+            ':name'     => getInput($data, 'name'),
+            ':mobile'   => $mobile,
+            ':id_proof' => $id_proof_filename,
+            ':status'   => getInput($data, 'status', 'active'),
+            ':id'       => $id
+        ]);
 
-        // 2. Handle unit re-assignment
-        $new_unit_id = (int)getInput($data, 'unit_id');
-        $effective_from = getInput($data, 'effective_from');
-
+        // Handle unit assignment changes
         if ($new_unit_id > 0 && !empty($effective_from)) {
-            // Find the current active mapping for this tenant
-            $current_mapping = $db->query("SELECT id, unit_id FROM tenant_unit_mapping WHERE tenant_id = :tenant_id AND effective_to IS NULL", [':tenant_id' => $id])->fetch();
+            // Get the current OPEN assignment for this tenant
+            $current_mapping = $db->query("SELECT id, unit_id FROM tenant_unit_mapping WHERE tenant_id = :tenant_id AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1", [':tenant_id' => $id])->fetch();
 
             if ($current_mapping) {
-                // If the unit is being changed
+                // CASE 1: The unit is being CHANGED. This is a "move".
                 if ((int)$current_mapping['unit_id'] !== $new_unit_id) {
-                    // Close the old mapping
-                    $db->query("UPDATE tenant_unit_mapping SET effective_to = CURDATE() WHERE id = :id", [':id' => $current_mapping['id']]);
-                    // Create a new mapping
-                    $db->query("INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from) VALUES (:tenant_id, :unit_id, :effective_from)", [
-                        ':tenant_id'      => $id,
-                        ':unit_id'        => $new_unit_id,
-                        ':effective_from' => $effective_from
+                    // Close the old assignment
+                    $db->query("UPDATE tenant_unit_mapping SET effective_to = :old_effective_to WHERE id = :id", [
+                        ':old_effective_to' => date('Y-m-d', strtotime($effective_from . ' -1 day')),
+                        ':id' => $current_mapping['id']
+                    ]);
+                    // Create the NEW assignment
+                    $db->query("INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from, effective_to) VALUES (:tenant_id, :unit_id, :effective_from, :new_effective_to)", [
+                        ':tenant_id'        => $id,
+                        ':unit_id'          => $new_unit_id,
+                        ':effective_from'   => $effective_from,
+                        ':new_effective_to' => !empty($effective_to) ? $effective_to : null
+                    ]);
+                } 
+                // CASE 2: The unit is the SAME. This is an "edit" of the current assignment's dates.
+                else {
+                    $db->query("UPDATE tenant_unit_mapping SET effective_from = :effective_from, effective_to = :effective_to WHERE id = :id", [
+                        ':effective_from' => $effective_from,
+                        ':effective_to'   => !empty($effective_to) ? $effective_to : null,
+                        ':id' => $current_mapping['id']
                     ]);
                 }
             } else {
-                // Tenant had no previous unit, just assign the new one
-                $db->query("INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from) VALUES (:tenant_id, :unit_id, :effective_from)", [
+                // No current assignment exists, so create a new one.
+                $db->query("INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from, effective_to) VALUES (:tenant_id, :unit_id, :effective_from, :effective_to)", [
                     ':tenant_id'      => $id,
                     ':unit_id'        => $new_unit_id,
-                    ':effective_from' => $effective_from
+                    ':effective_from' => $effective_from,
+                    ':effective_to'   => !empty($effective_to) ? $effective_to : null
                 ]);
             }
         }
@@ -269,7 +338,7 @@ function updateTenant(array $data, int $id): array
 
     } catch (Exception $e) {
         $db->rollBack();
-        return ['status' => 'error', 'message' => $e->getMessage()];
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
     }
 }
 
