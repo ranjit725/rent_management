@@ -37,6 +37,41 @@ function buildingsJS() {
 ?>
 
 <?php
+
+function unitsJS() {
+    ?>
+    <script>
+        $(document).ready(function() {
+            // Initialize DataTable
+            $('#unitsTable').DataTable({
+                responsive: true,
+                scrollX: true,
+                autoWidth: false
+            });
+        });
+
+        // Function to open modal and pre-fill form for editing
+        window.editUnit = function(u) {
+            $('#formTitle').text('Edit Unit');
+            $('#unit_id').val(u.id);
+            $('#building_id').val(u.building_id);
+            $('#unit_name').val(u.unit_name);
+            $('#submitBtn').text('Update Unit');
+        }
+
+        // Function to reset form to "Add" mode
+        window.openAddUnitForm = function() {
+            $('#formTitle').text('Add Unit');
+            $('#unitForm')[0].reset();
+            $('#unit_id').val('');
+            $('#submitBtn').text('Add Unit');
+        }
+    </script>
+    <?php
+}
+?>
+
+<?php
 function tenantsJS() {
     ?>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>

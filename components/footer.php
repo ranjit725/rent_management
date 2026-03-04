@@ -13,7 +13,7 @@ switch(basename($_SERVER['PHP_SELF'])) {
         if(function_exists('buildingsJS')) buildingsJS(); 
         break;
     case "units.php":
-        // unitsJS(); // create when needed
+        if(function_exists('unitsJS')) unitsJS(); // Make sure this line is active
         break;
     // add other page-specific JS as needed
 }

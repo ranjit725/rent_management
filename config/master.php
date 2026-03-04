@@ -117,6 +117,40 @@ function getUnits(): array
 }
 
 
+function updateUnit(array $data, int $id): array
+{
+    $db = DB::getInstance();
+    $sql = "UPDATE units SET building_id=:building_id, unit_name=:unit_name WHERE id=:id";
+    $params = [
+        ':building_id' => (int)getInput($data, 'building_id'),
+        ':unit_name'   => getInput($data, 'unit_name'),
+        ':id'          => $id
+    ];
+    try {
+        $db->query($sql, $params);
+        return ['status' => 'success', 'message' => 'Unit updated successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => $e->getMessage()];
+    }
+}
+
+function deleteUnit(int $id): array
+{
+    $db = DB::getInstance();
+    $sql = "DELETE FROM units WHERE id=:id";
+    try {
+        $db->query($sql, [':id' => $id]);
+        return ['status' => 'success', 'message' => 'Unit deleted successfully!'];
+    } catch (Exception $e) {
+        // Prevent deletion if unit has tenants
+        if (str_contains($e->getMessage(), 'Integrity constraint violation')) {
+            return ['status' => 'error', 'message' => 'Cannot delete unit with existing tenant mappings.'];
+        }
+        return ['status' => 'error', 'message' => $e->getMessage()];
+    }
+}
+
+
 // ======== Tenants ========
 function createTenant(array $data, array $files = [], int $id = null): array
 {
