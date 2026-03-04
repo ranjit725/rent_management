@@ -80,41 +80,35 @@ function tenantsJS() {
     <script src="https://cdn.datatables.net/responsive/2.5.0/js/responsive.bootstrap5.min.js"></script>
 
     <script>
-    $(document).ready(function() {
-        $('#tenantsTable').DataTable({
-            responsive:true,
-            scrollX:true,
-            autoWidth: false
+        $(document).ready(function() {
+            $('#tenantsTable').DataTable({
+                responsive: true,
+                scrollX: true,
+                autoWidth: false
+            });
         });
 
-        window.openTenantModal = function(){
-            $('#modalTitle').text('Add Tenant');
+        window.editTenant = function(t) {
+            $('#formTitle').text('Edit Tenant');
+            $('#tenant_id').val(t.id);
+            $('#name').val(t.name);
+            $('#mobile').val(t.mobile);
+            $('#id_proof').val(t.id_proof);
+            $('#status').val(t.status);
+
+            // Pre-fill unit assignment
+            $('#unit_id').val(t.unit_id || '');
+            $('#effective_from').val(t.assigned_from || '');
+
+            $('#submitBtn').text('Update Tenant');
+        }
+
+        window.openAddTenantForm = function() {
+            $('#formTitle').text('Add Tenant');
             $('#tenantForm')[0].reset();
             $('#tenant_id').val('');
-            $('#tenantModal').show();
+            $('#submitBtn').text('Add Tenant');
         }
-
-        window.closeTenantModal = function(){
-            $('#tenantModal').hide();
-        }
-
-        window.editTenant = function(t){
-            $('#modalTitle').text('Edit Tenant');
-            $('#tenant_id').val(t.id);
-            $('#tenant_name').val(t.name);
-            $('#mobile').val(t.mobile);
-            $('#status').val(t.status);
-            $('#tenantModal').show();
-        }
-
-        $('#tenantForm').on('submit', function(e){
-            let mobileVal = $('#mobile').val().trim();
-            if(mobileVal && !/^[6-9]\d{9}$/.test(mobileVal)){
-                alert('Mobile number must be valid 10 digits');
-                e.preventDefault();
-            }
-        });
-    });
     </script>
     <?php
 }

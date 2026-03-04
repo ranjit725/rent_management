@@ -72,6 +72,8 @@ function createUnit(array $data): array
 
 // Add to config/master.php
 
+// Add to config/master.php
+
 function updateBuilding(array $data, int $id): array
 {
     $db = DB::getInstance();
@@ -152,134 +154,134 @@ function deleteUnit(int $id): array
 
 
 // ======== Tenants ========
-function createTenant(array $data, array $files = [], int $id = null): array
+// In config/master.php
+
+// --- MODIFIED createTenant ---
+function createTenant(array $data): array
 {
     $db = DB::getInstance();
-
-    // Validate mobile
-    $mobile = getInput($data, 'mobile');
-    if ($mobile) {
-        if (!preg_match('/^[6-9]\d{9}$/', $mobile)) {
-            return ['status' => 'error', 'message' => 'Mobile number must be valid 10 digits'];
-        }
-    }
-
-    // Handle ID proof upload
-    $idProofPath = null;
-    if (isset($files['id_proof']) && $files['id_proof']['error'] === UPLOAD_ERR_OK) {
-        $ext = pathinfo($files['id_proof']['name'], PATHINFO_EXTENSION);
-        $filename = 'tenant_id_' . time() . '.' . $ext;
-        $uploadDir = __DIR__ . '/../uploads/tenants/';
-        if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
-        $targetPath = $uploadDir . $filename;
-        if (move_uploaded_file($files['id_proof']['tmp_name'], $targetPath)) {
-            $idProofPath = 'uploads/tenants/' . $filename;
-        }
-    }
-
-    // Get status (default to 'active')
-    $status = in_array($data['status'] ?? '', ['active','inactive']) ? $data['status'] : 'active';
-
-    if ($id) {
-        // Edit existing tenant
-        $sql = "UPDATE tenants SET name=:name, mobile=:mobile, status=:status" . ($idProofPath ? ", id_proof=:id_proof" : "") . " WHERE id=:id";
-        $params = [
-            ':name' => getInput($data, 'tenant_name'),
-            ':mobile' => $mobile,
-            ':status' => $status,
-            ':id' => $id
-        ];
-        if ($idProofPath) $params[':id_proof'] = $idProofPath;
-
-        try {
-            $db->query($sql, $params);
-            return ['status' => 'success', 'id' => $id];
-        } catch (Exception $e) {
-            return ['status' => 'error', 'message' => $e->getMessage()];
-        }
-    } else {
-        // Insert new tenant
-        $sql = "INSERT INTO tenants (name, mobile, id_proof, status) VALUES (:name, :mobile, :id_proof, :status)";
-        $params = [
-            ':name' => getInput($data, 'tenant_name'),
-            ':mobile' => $mobile,
-            ':id_proof' => $idProofPath,
-            ':status' => $status
-        ];
-
-        try {
-            $db->query($sql, $params);
-            return ['status' => 'success', 'id' => $db->lastInsertId()];
-        } catch (Exception $e) {
-            return ['status' => 'error', 'message' => $e->getMessage()];
-        }
-    }
-}
-
-function getTenants(): array
-{
-    $db = DB::getInstance();
-    return $db->fetchAll("SELECT * FROM tenants ORDER BY id DESC");
-}
-
-// ======== Tenant-Unit Mapping ========
-function createTenantUnitMapping(array $data, int $id = null): array {
-    $db = DB::getInstance();
-
-    $tenant_id = (int)($data['tenant_id'] ?? 0);
-    $unit_id   = (int)($data['unit_id'] ?? 0);
-    $effective_from = $data['effective_from'] ?? null;
-    $effective_to   = $data['effective_to'] ?? null;
-
-    // Validation
-    if (!$tenant_id || !$unit_id || !$effective_from) {
-        return ['status'=>'error','message'=>'Tenant, Unit and Effective From are required'];
-    }
-    if ($effective_to && $effective_to < $effective_from) {
-        return ['status'=>'error','message'=>'Effective To cannot be before Effective From'];
-    }
+    $sql_tenant = "INSERT INTO tenants (name, mobile, id_proof, status) VALUES (:name, :mobile, :id_proof, :status)";
+    $params_tenant = [
+        ':name'     => getInput($data, 'name'),
+        ':mobile'   => getInput($data, 'mobile'),
+        ':id_proof' => getInput($data, 'id_proof'),
+        ':status'   => getInput($data, 'status', 'active')
+    ];
 
     try {
-        if ($id) {
-            // Update existing
-            $sql = "UPDATE tenant_unit_mapping 
-                    SET tenant_id=:tenant_id, unit_id=:unit_id, effective_from=:effective_from, effective_to=:effective_to
-                    WHERE id=:id";
-            $params = [
-                ':tenant_id'=>$tenant_id,
-                ':unit_id'=>$unit_id,
-                ':effective_from'=>$effective_from,
-                ':effective_to'=>$effective_to,
-                ':id'=>$id
+        $db->beginTransaction();
+
+        $db->query($sql_tenant, $params_tenant);
+        $tenant_id = $db->lastInsertId();
+
+        // If a unit is assigned, create the mapping
+        $unit_id = (int)getInput($data, 'unit_id');
+        $effective_from = getInput($data, 'effective_from');
+
+        if ($tenant_id && $unit_id > 0 && !empty($effective_from)) {
+            $sql_mapping = "INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from) VALUES (:tenant_id, :unit_id, :effective_from)";
+            $params_mapping = [
+                ':tenant_id'      => $tenant_id,
+                ':unit_id'        => $unit_id,
+                ':effective_from' => $effective_from
             ];
-            $db->query($sql,$params);
-            return ['status'=>'success','id'=>$id];
-        } else {
-            // Insert new
-            $sql = "INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from, effective_to)
-                    VALUES (:tenant_id, :unit_id, :effective_from, :effective_to)";
-            $params = [
-                ':tenant_id'=>$tenant_id,
-                ':unit_id'=>$unit_id,
-                ':effective_from'=>$effective_from,
-                ':effective_to'=>$effective_to
-            ];
-            $db->query($sql,$params);
-            return ['status'=>'success','id'=>$db->lastInsertId()];
+            $db->query($sql_mapping, $params_mapping);
         }
+
+        $db->commit();
+        return ['status' => 'success', 'message' => 'Tenant created successfully!'];
+
     } catch (Exception $e) {
-        return ['status'=>'error','message'=>$e->getMessage()];
+        $db->rollBack();
+        return ['status' => 'error', 'message' => $e->getMessage()];
     }
 }
 
-function getTenantUnitMappings(): array {
+// --- NEW FUNCTIONS ---
+
+function getTenantsWithUnit(): array
+{
     $db = DB::getInstance();
-    return $db->fetchAll("
-        SELECT tum.*, t.name as tenant_name, u.unit_name, b.name as building_name
-        FROM tenant_unit_mapping tum
-        INNER JOIN tenants t ON t.id = tum.tenant_id
-        INNER JOIN units u ON u.id = tum.unit_id
-        INNER JOIN buildings b ON b.id = u.building_id
-        ORDER BY tum.id DESC
-    ");
+    $sql = "SELECT
+                t.*,
+                tum.effective_from as assigned_from,
+                u.unit_name,
+                u.building_id,
+                b.name as building_name
+            FROM tenants t
+            LEFT JOIN tenant_unit_mapping tum ON t.id = tum.tenant_id AND tum.effective_to IS NULL
+            LEFT JOIN units u ON tum.unit_id = u.id
+            LEFT JOIN buildings b ON u.building_id = b.id
+            ORDER BY t.created_at DESC";
+    return $db->query($sql)->fetchAll();
+}
+
+function updateTenant(array $data, int $id): array
+{
+    $db = DB::getInstance();
+    $sql_tenant = "UPDATE tenants SET name=:name, mobile=:mobile, id_proof=:id_proof, status=:status WHERE id=:id";
+    $params_tenant = [
+        ':name'     => getInput($data, 'name'),
+        ':mobile'   => getInput($data, 'mobile'),
+        ':id_proof' => getInput($data, 'id_proof'),
+        ':status'   => getInput($data, 'status', 'active'),
+        ':id'       => $id
+    ];
+
+    try {
+        $db->beginTransaction();
+
+        // 1. Update tenant details
+        $db->query($sql_tenant, $params_tenant);
+
+        // 2. Handle unit re-assignment
+        $new_unit_id = (int)getInput($data, 'unit_id');
+        $effective_from = getInput($data, 'effective_from');
+
+        if ($new_unit_id > 0 && !empty($effective_from)) {
+            // Find the current active mapping for this tenant
+            $current_mapping = $db->query("SELECT id, unit_id FROM tenant_unit_mapping WHERE tenant_id = :tenant_id AND effective_to IS NULL", [':tenant_id' => $id])->fetch();
+
+            if ($current_mapping) {
+                // If the unit is being changed
+                if ((int)$current_mapping['unit_id'] !== $new_unit_id) {
+                    // Close the old mapping
+                    $db->query("UPDATE tenant_unit_mapping SET effective_to = CURDATE() WHERE id = :id", [':id' => $current_mapping['id']]);
+                    // Create a new mapping
+                    $db->query("INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from) VALUES (:tenant_id, :unit_id, :effective_from)", [
+                        ':tenant_id'      => $id,
+                        ':unit_id'        => $new_unit_id,
+                        ':effective_from' => $effective_from
+                    ]);
+                }
+            } else {
+                // Tenant had no previous unit, just assign the new one
+                $db->query("INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from) VALUES (:tenant_id, :unit_id, :effective_from)", [
+                    ':tenant_id'      => $id,
+                    ':unit_id'        => $new_unit_id,
+                    ':effective_from' => $effective_from
+                ]);
+            }
+        }
+
+        $db->commit();
+        return ['status' => 'success', 'message' => 'Tenant updated successfully!'];
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        return ['status' => 'error', 'message' => $e->getMessage()];
+    }
+}
+
+function deleteTenant(int $id): array
+{
+    $db = DB::getInstance();
+    $sql = "DELETE FROM tenants WHERE id=:id";
+    try {
+        $db->query($sql, [':id' => $id]);
+        // Due to ON DELETE CASCADE, related mappings will be deleted automatically.
+        return ['status' => 'success', 'message' => 'Tenant deleted successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => $e->getMessage()];
+    }
 }
