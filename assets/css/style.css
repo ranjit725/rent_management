@@ -1,0 +1,142 @@
+body {
+    font-family: 'Poppins', sans-serif;
+    background: #f5f7fb;
+    margin: 0;
+}
+
+.sidebar {
+    width: 250px;
+    height: 100vh;
+    background: #1e293b;
+    color: #fff;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1050;
+    transition: transform 0.3s ease;
+}
+
+
+.sidebar-header {
+    padding: 20px;
+    text-align: center;
+    font-weight: 600;
+    font-size: 18px;
+    background: #0f172a;
+}
+
+.sidebar-menu {
+    list-style: none;
+    padding: 0;
+}
+
+
+.sidebar-menu li {
+    padding: 12px 20px;
+}
+
+.sidebar-menu li a {
+    color: #cbd5e1;
+    text-decoration: none;
+    display: block;
+}
+
+.sidebar-menu li a:hover {
+    background: #334155;
+    border-radius: 6px;
+    color: #fff;
+}
+
+/* Submenu */
+.sidebar-menu li.has-submenu > .submenu {
+    list-style: none;
+    padding-left: 0;
+    display: none; /* hidden by default */
+}
+
+.sidebar-menu li.has-submenu > .submenu li a {
+    padding-left: 40px;
+    font-size: 14px;
+}
+
+.sidebar-menu li.has-submenu.active > .submenu {
+    display: block;
+}
+
+.submenu-arrow {
+    float: right;
+    transition: transform 0.3s ease;
+}
+
+.has-submenu.active > a .submenu-arrow {
+    transform: rotate(180deg);
+}
+
+/* Active menu highlight */
+.sidebar-menu li.active > a {
+    background: #334155;
+    color: #fff;
+    border-radius: 6px;
+}
+
+.sidebar-menu li.has-submenu.active > a {
+    background: #334155;
+    color: #fff;
+}
+
+.main-content {
+    margin-left: 250px;
+    padding: 20px;
+    transition: 0.3s;
+}
+
+@media (max-width: 992px) {
+    .sidebar {
+        transform: translateX(-100%);
+    }
+
+    .sidebar.active {
+        transform: translateX(0);
+    }
+
+    .main-content {
+        margin-left: 0;
+    }
+}
+
+/* Overlay */
+.overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 1040;
+    display: none;
+}
+
+.overlay.active {
+    display: block;
+}
+
+
+/* Modal adjustments */
+.modal {
+    display: none; /* hidden by default */
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1050;
+    justify-content: center;
+    align-items: center;
+    padding: 15px;
+}
+
+.modal-dialog {
+    max-width: 500px;
+    width: 100%;
+}
+
+.modal-content {
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
