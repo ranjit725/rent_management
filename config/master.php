@@ -424,7 +424,7 @@ function getMeters(): array
     $db = DB::getInstance();
     $sql = "
         SELECT 
-            m.id, m.meter_name, m.meter_type, m.status, m.created_at,
+            m.id, m.building_id, m.meter_name, m.meter_type, m.status, m.created_at,
             b.name as building_name
         FROM meters m
         LEFT JOIN buildings b ON m.building_id = b.id
