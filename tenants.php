@@ -3,12 +3,13 @@ require_once 'config/master.php';
 
 // Handle POST request for both Add and Edit
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // print_r($_POST);
     $tenant_id = (int)($_POST['tenant_id'] ?? 0);
 
     if ($tenant_id > 0) {
-        $result = updateTenant($_POST, $tenant_id);
+        $result = updateTenant($_POST, $_FILES, $tenant_id);
     } else {
-        $result = createTenant($_POST);
+        $result = createTenant($_POST, $_FILES);;
     }
 
     $_SESSION['flash_message'] = $result;
@@ -75,9 +76,12 @@ unset($_SESSION['old_input']);
                             </div>
                         </div>
 
+                        <h6>ID Proof</h6>
                         <div class="mb-3">
-                            <label class="form-label">ID Proof</label>
-                            <input type="text" name="id_proof" id="id_proof" class="form-control" value="<?= htmlspecialchars($old['id_proof'] ?? '') ?>">
+                            <label class="form-label">ID Proof (optional)</label>
+                            <input type="file" name="id_proof" id="id_proof" accept="image/*,application/pdf" capture="camera" class="form-control">
+                            <small class="form-text text-muted">Accepted: Images or PDF</small>
+                            <div id="currentProofContainer"></div>
                         </div>
 
                         <div class="mb-3">
@@ -113,16 +117,7 @@ unset($_SESSION['old_input']);
                             <label class="form-label">Effective To</label>
                             <input type="date" name="effective_to" id="effective_to" class="form-control" value="<?= $old['effective_to'] ?? '' ?>" <?= (empty($old['unit_id'])) ? 'disabled' : '' ?>>
                             <small class="form-text text-muted">Leave blank if this is an ongoing assignment.</small>
-                        </div>
-
-                        <hr>
-                        <h6>ID Proof</h6>
-                        <div class="mb-3">
-                            <label class="form-label">ID Proof (optional)</label>
-                            <input type="file" name="id_proof" id="id_proof" accept="image/*,application/pdf" capture="camera" class="form-control">
-                            <small class="form-text text-muted">Accepted: Images or PDF</small>
-                            <div id="currentProofContainer"></div>
-                        </div>
+                        </div>         
 
                         <button type="submit" class="btn btn-primary w-100" id="submitBtn">
                             Add Tenant
@@ -154,7 +149,8 @@ unset($_SESSION['old_input']);
                         <tbody>
     <?php if (!empty($tenants)): ?>
         <?php foreach ($tenants as $t): ?>
-            <tr>
+            <tr class="<?= $t['status'] === 'inactive' ? 'table-danger' : '' ?>">
+                <td><?= htmlspecialchars($t['id']) ?></td>
                 <td><?= htmlspecialchars($t['name']) ?></td>
                 <td><?= htmlspecialchars($t['mobile']) ?></td>
                 <td>

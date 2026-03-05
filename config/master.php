@@ -161,10 +161,12 @@ function getTenantsWithUnit(): array
         SELECT 
             t.id, t.name, t.mobile, t.status, t.id_proof,
             m.id as mapping_id, m.unit_id, m.effective_from, m.effective_to,
-            u.unit_name, u.building_name
+            u.unit_name, 
+            b.name as building_name -- CORRECT: Select name from the buildings table
         FROM tenants t
         LEFT JOIN tenant_unit_mapping m ON t.id = m.tenant_id
         LEFT JOIN units u ON m.unit_id = u.id
+        LEFT JOIN buildings b ON u.building_id = b.id -- CORRECT: Join the buildings table
         WHERE m.id = (
             SELECT sub_m.id FROM tenant_unit_mapping sub_m 
             WHERE sub_m.tenant_id = t.id 
@@ -176,25 +178,62 @@ function getTenantsWithUnit(): array
     return $db->query($sql)->fetchAll();
 }
 
-/**
- * Creates a new tenant and assigns them to a unit with a date range.
- */
+function handleIdProofUpload($file, $current_file = null): array
+{
+    // Check if a new file was actually uploaded
+    if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
+        // No new file uploaded, which is okay. Return success with the old filename.
+        return ['status' => 'no_change', 'filename' => $current_file];
+    }
+
+    // Validate file type
+    $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime_type = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+
+    if (!in_array($mime_type, $allowed_types)) {
+        return ['status' => 'error', 'message' => 'Invalid file type. Only JPG, PNG, GIF, and PDF are allowed.'];
+    }
+
+    // Generate a unique filename
+    $upload_dir = __DIR__ . '/../uploads/id_proofs/';
+    if (!is_dir($upload_dir)) {
+        mkdir($upload_dir, 0755, true);
+    }
+    $filename = uniqid('proof_', true) . '.' . pathinfo($file['name'], PATHINFO_EXTENSION);
+    $destination = $upload_dir . $filename;
+
+    // Move the file
+    if (move_uploaded_file($file['tmp_name'], $destination)) {
+        // If successful, delete the old file
+        if ($current_file && file_exists($upload_dir . $current_file)) {
+            unlink($upload_dir . $current_file);
+        }
+        return ['status' => 'success', 'filename' => $filename];
+    } else {
+        return ['status' => 'error', 'message' => 'Failed to move uploaded file.'];
+    }
+}
+
 function createTenant(array $data, array $file_data): array
 {
     $db = DB::getInstance();
-    
+
     // 1. Validate Mobile Number
     $mobile = getInput($data, 'mobile');
-    if ($mobile && !preg_match('/^[6-9]\d{9}$/', $mobile)) {
+    if (!preg_match('/^[6-9]\d{9}$/', $mobile)) {
         return ['status' => 'error', 'message' => 'Mobile number must be a valid 10-digit number starting with 6-9.'];
     }
 
-    // 2. Handle File Upload
+    // 2. Handle File Upload (CORRECTED LOGIC)
     $upload_result = handleIdProofUpload($file_data['id_proof'] ?? null);
     if ($upload_result['status'] === 'error') {
         return $upload_result;
     }
-    $id_proof_filename = $upload_result['status'] === 'success' ? $upload_result['filename'] : null;
+    
+    // FIX: If a file was uploaded successfully, use its name. Otherwise, use an empty string.
+    $id_proof_filename = ($upload_result['status'] === 'success') ? $upload_result['filename'] : '';
 
     // 3. Validate Assignment Dates
     $unit_id = (int)getInput($data, 'unit_id');
@@ -209,21 +248,22 @@ function createTenant(array $data, array $file_data): array
             return ['status' => 'error', 'message' => 'Effective To date cannot be before Effective From date.'];
         }
     }
-    
+
     try {
         $db->beginTransaction();
 
-        // Create tenant record
+        // Insert tenant core details
         $db->query("INSERT INTO tenants (name, mobile, id_proof, status) VALUES (:name, :mobile, :id_proof, :status)", [
             ':name'     => getInput($data, 'name'),
             ':mobile'   => $mobile,
-            ':id_proof' => $id_proof_filename,
+            ':id_proof' => $id_proof_filename, // This will now be an empty string, not null
             ':status'   => getInput($data, 'status', 'active')
         ]);
+        
         $tenant_id = $db->lastInsertId();
 
-        // Create unit mapping if a unit was selected
-        if ($tenant_id && $unit_id > 0 && !empty($effective_from)) {
+        // Handle unit assignment if provided
+        if ($unit_id > 0 && !empty($effective_from)) {
             $db->query("INSERT INTO tenant_unit_mapping (tenant_id, unit_id, effective_from, effective_to) VALUES (:tenant_id, :unit_id, :effective_from, :effective_to)", [
                 ':tenant_id'      => $tenant_id,
                 ':unit_id'        => $unit_id,
@@ -237,16 +277,14 @@ function createTenant(array $data, array $file_data): array
 
     } catch (Exception $e) {
         $db->rollBack();
-        if ($id_proof_filename && file_exists('uploads/id_proofs/' . $id_proof_filename)) {
-            unlink('uploads/id_proofs/' . $id_proof_filename);
+        // If we uploaded a file and the transaction failed, delete it
+        if ($id_proof_filename && file_exists(__DIR__ . '/../uploads/id_proofs/' . $id_proof_filename)) {
+            unlink(__DIR__ . '/../uploads/id_proofs/' . $id_proof_filename);
         }
         return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
     }
 }
 
-/**
- * Updates a tenant's details and handles unit moves or date edits.
- */
 function updateTenant(array $data, array $file_data, int $id): array
 {
     $db = DB::getInstance();
