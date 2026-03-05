@@ -62,7 +62,7 @@ unset($_SESSION['old_input']);
                 <div class="card-body">
                     <h5 id="formTitle">Add Tenant</h5>
 
-                    <form method="POST" id="tenantForm">
+                    <form method="POST" id="tenantForm" enctype="multipart/form-data">
                         <input type="hidden" name="tenant_id" id="tenant_id">
 
                         <div class="row">
@@ -142,7 +142,6 @@ unset($_SESSION['old_input']);
                                 <th>Name</th>
                                 <th>Mobile</th>
                                 <th>Current Unit</th>
-                                <th>Status</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -150,7 +149,15 @@ unset($_SESSION['old_input']);
     <?php if (!empty($tenants)): ?>
         <?php foreach ($tenants as $t): ?>
             <tr class="<?= $t['status'] === 'inactive' ? 'table-danger' : '' ?>">
-                <td><?= htmlspecialchars($t['id']) ?></td>
+                <td>
+                    <?php if (!empty($t['id_proof'])): ?>
+                        <a href="uploads/id_proofs/<?= htmlspecialchars($t['id_proof']) ?>" target="_blank">
+                            <?= htmlspecialchars($t['id']) ?>
+                        </a>
+                    <?php else: ?>
+                        <?= htmlspecialchars($t['id']) ?>
+                    <?php endif; ?>
+                    </td>
                 <td><?= htmlspecialchars($t['name']) ?></td>
                 <td><?= htmlspecialchars($t['mobile']) ?></td>
                 <td>
@@ -169,11 +176,6 @@ unset($_SESSION['old_input']);
                     <?php else: ?>
                         <span class="text-muted">Not Assigned</span>
                     <?php endif; ?>
-                </td>
-                <td>
-                    <span class="badge bg-<?= $t['status'] === 'active' ? 'success' : 'secondary' ?>">
-                        <?= htmlspecialchars(ucfirst($t['status'])) ?>
-                    </span>
                 </td>
                 <td>
                     <button class="btn btn-sm btn-warning" onclick="editTenant(<?= htmlspecialchars(json_encode($t)) ?>)">
