@@ -479,3 +479,108 @@ function deleteMeter(int $id): array
         return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
     }
 }
+
+
+/**
+ * Fetches the last reading for a given meter to determine the 'previous' value.
+ */
+function getLastReadingForMeter(int $meter_id): ?array
+{
+    $db = DB::getInstance();
+    $sql = "SELECT reading_date,current_reading FROM meter_readings WHERE meter_id = :meter_id ORDER BY reading_date DESC, id DESC LIMIT 1";
+    $reading = $db->query($sql, [':meter_id' => $meter_id])->fetch();
+    return $reading ?: null;
+}
+
+/**
+ * Creates a new meter reading.
+ * Handles file upload and checks for duplicate entries.
+ */
+function addMeterReading(array $data, array $file = null): array
+{
+    $db = DB::getInstance();
+    $meter_id = (int)getInput($data, 'meter_id');
+    $current_reading = (int)getInput($data, 'current_reading');
+    $reading_date = getInput($data, 'reading_date');
+    $per_unit_rate = (float)getInput($data, 'per_unit_rate');
+
+    // Get the previous reading
+    $last_reading = getLastReadingForMeter($meter_id);
+    $previous_reading = $last_reading ? (int)$last_reading['current_reading'] : 0;
+
+    // Handle file upload
+    $image_path = null;
+    if ($file && $file['image_path']['error'] === UPLOAD_ERR_OK) {
+        $upload_dir = 'uploads/meter_readings/';
+        $file_name = time() . '_' . basename($file['image_path']['name']);
+        $target_file = $upload_dir . $file_name;
+        if (move_uploaded_file($file['image_path']['tmp_name'], $target_file)) {
+            $image_path = $target_file;
+        }
+    }
+
+    try {
+        $sql = "INSERT INTO meter_readings (meter_id, reading_date, previous_reading, current_reading, per_unit_rate, image_path) 
+                VALUES (:meter_id, :reading_date, :previous_reading, :current_reading, :per_unit_rate, :image_path)";
+        $db->query($sql, [
+            ':meter_id' => $meter_id,
+            ':reading_date' => $reading_date,
+            ':previous_reading' => $previous_reading,
+            ':current_reading' => $current_reading,
+            ':per_unit_rate' => $per_unit_rate,
+            ':image_path' => $image_path,
+        ]);
+        return ['status' => 'success', 'message' => 'Meter reading added successfully!'];
+    } catch (Exception $e) {
+        // Handle potential duplicate entry error
+        if ($e->getCode() == 23000) {
+            return ['status' => 'error', 'message' => 'A reading for this meter already exists on this date.'];
+        }
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Fetches all meter readings, calculating units and total amount on the fly.
+ */
+function getMeterReadings(): array
+{
+    $db = DB::getInstance();
+    $sql = "
+        SELECT 
+            mr.id, mr.reading_date, mr.previous_reading, mr.current_reading, 
+            mr.per_unit_rate, mr.image_path,
+            (mr.current_reading - mr.previous_reading) AS units_consumed,
+            (mr.current_reading - mr.previous_reading) * mr.per_unit_rate AS total_amount,
+            m.meter_name, m.meter_type,
+            b.name as building_name
+        FROM meter_readings mr
+        LEFT JOIN meters m ON mr.meter_id = m.id
+        LEFT JOIN buildings b ON m.building_id = b.id
+        ORDER BY mr.reading_date DESC, mr.id DESC
+    ";
+    return $db->query($sql)->fetchAll();
+}
+
+/**
+ * Deletes a meter reading and its associated image file.
+ */
+function deleteMeterReading(int $id): array
+{
+    $db = DB::getInstance();
+    try {
+        // Fetch the image path before deleting the record
+        $reading = $db->query("SELECT image_path FROM meter_readings WHERE id = :id", [':id' => $id])->fetch();
+        
+        $db->query("DELETE FROM meter_readings WHERE id = :id", [':id' => $id]);
+
+        // Delete the image file from the server if it exists
+        if ($reading && !empty($reading['image_path']) && file_exists($reading['image_path'])) {
+            unlink($reading['image_path']);
+        }
+
+        return ['status' => 'success', 'message' => 'Meter reading deleted successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}

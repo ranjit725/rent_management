@@ -250,3 +250,138 @@ $(document).ready(function(){
 });
 </script>
 <?php } ?>
+
+<?php
+function meterReadingsJS() {
+?>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/responsive/2.5.0/js/dataTables.responsive.min.js"></script>
+<script src="https://cdn.datatables.net/responsive/2.5.0/js/responsive.bootstrap5.min.js"></script>
+
+<script>
+$(document).ready(function() {
+
+    // Initialize DataTable
+    $('#readingsTable').DataTable({
+        responsive: true,
+        autoWidth: false,
+        order: [[0, 'desc']]
+    });
+
+    // Set default date to today
+    $('#reading_date').val(new Date().toISOString().split('T')[0]);
+
+    // Calculation function
+    function calculateTotals() {
+
+        let current = parseFloat($('#current_reading').val()) || 0;
+        let previous = parseFloat($('#previous_reading').val()) || 0;
+        let rate = parseFloat($('#per_unit_rate').val()) || 0;
+
+        let units = current - previous;
+
+        if (units < 0) {
+            units = 0;
+        }
+
+        let total = units * rate;
+
+        $('#units_consumed').val(units);
+        $('#total_amount').val(total.toFixed(2));
+    }
+
+    // Recalculate on input
+    $('#current_reading, #per_unit_rate').on('input', calculateTotals);
+
+
+    // Load last meter reading
+    $('#meter_id').on('change', function() {
+
+        let meterId = $(this).val();
+
+        if (!meterId) {
+
+            $('#previous_reading').val('');
+            $('#previous_reading_hidden').val('');
+            $('#last_reading_info').text('');
+
+            calculateTotals();
+            return;
+        }
+
+        $.ajax({
+            url: 'api/get_last_reading.php',
+            type: 'GET',
+            data: { meter_id: meterId },
+            dataType: 'json',
+
+            success: function(response) {
+
+                if (response.success && response.data) {
+
+                    let prev = response.data.current_reading;
+
+                    $('#previous_reading').val(prev);
+                    $('#previous_reading_hidden').val(prev);
+
+                    let d = new Date(response.data.reading_date);
+
+                    let formattedDate = d.toLocaleDateString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric'
+                    });
+
+                    $('#last_reading_info').text(
+                        'Last Reading: ' + prev + ' (' + formattedDate + ')'
+                    );
+
+                } else {
+
+                    $('#previous_reading').val(0);
+                    $('#previous_reading_hidden').val(0);
+
+                    $('#last_reading_info').text('No previous reading found');
+                }
+
+                calculateTotals();
+            },
+
+            error: function() {
+
+                $('#previous_reading').val('');
+                $('#previous_reading_hidden').val('');
+
+                $('#last_reading_info').text('Error loading previous reading');
+
+                calculateTotals();
+            }
+        });
+
+    });
+
+
+    // Prevent invalid reading
+    $('#current_reading').on('blur', function() {
+
+        let previous = parseFloat($('#previous_reading').val()) || 0;
+        let current = parseFloat($(this).val()) || 0;
+
+        if (current < previous) {
+
+            alert('Current reading cannot be less than previous reading.');
+
+            $(this).val('');
+            $('#units_consumed').val('');
+            $('#total_amount').val('');
+        }
+
+    });
+
+});
+</script>
+
+<?php
+}
+?>

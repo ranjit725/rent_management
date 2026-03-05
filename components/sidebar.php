@@ -30,6 +30,11 @@
         <li class="<?= $currentPage === 'meters.php' ? 'active' : '' ?>">
             <a href="meters.php"><i class="fa fa-bolt"></i> Meters</a>
         </li>
+        <li class="nav-item">
+            <a class="nav-link" href="meter_readings.php">
+                <i class="fa fa-clipboard-list"></i> Meter Readings
+            </a>
+        </li>
         <li class="<?= $currentPage === 'billing.php' ? 'active' : '' ?>">
             <a href="billing.php"><i class="fa fa-file-invoice"></i> Billing</a>
         </li>

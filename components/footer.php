@@ -19,6 +19,9 @@ switch(basename($_SERVER['PHP_SELF'])) {
     case "meters.php":
         if(function_exists('metersJS')) metersJS();
         break;
+    case "meter_readings.php":
+        if(function_exists('meterReadingsJS')) meterReadingsJS();
+        break;
 }
 ?>
 

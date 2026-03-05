@@ -38,13 +38,15 @@
             echo '<title>Units</title>';
             break;
 
-            
-
         case "meters.php":
             if (function_exists('metersCSS')) metersCSS();
             echo '<title>Meters</title>';
             break;
 
+        case "meter_readings.php":
+            if (function_exists('meterReadingsCSS')) meterReadingsCSS();
+            echo '<title>Meter Readings</title>';
+            break;
         // Add more pages as needed
     }
     ?>
