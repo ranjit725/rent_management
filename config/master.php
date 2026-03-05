@@ -392,3 +392,90 @@ function deleteTenant(int $id): array
         return ['status' => 'error', 'message' => $e->getMessage()];
     }
 }
+
+/**
+ * Creates a new meter.
+ */
+function addMeter(array $data): array
+{
+    $db = DB::getInstance();
+    try {
+        $db->query("INSERT INTO meters (building_id, meter_name, meter_type, status) VALUES (:building_id, :meter_name, :meter_type, :status)", [
+            ':building_id' => (int)getInput($data, 'building_id'),
+            ':meter_name'  => getInput($data, 'meter_name'),
+            ':meter_type'  => getInput($data, 'meter_type'),
+            ':status'      => (int)(getInput($data, 'status') === '1'),
+        ]);
+        return ['status' => 'success', 'message' => 'Meter added successfully!'];
+    } catch (Exception $e) {
+        // Check for duplicate entry error
+        if ($e->getCode() == 23000) {
+            return ['status' => 'error', 'message' => 'A meter with this name already exists for the selected building.'];
+        }
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Fetches all meters with their building names.
+ */
+function getMeters(): array
+{
+    $db = DB::getInstance();
+    $sql = "
+        SELECT 
+            m.id, m.meter_name, m.meter_type, m.status, m.created_at,
+            b.name as building_name
+        FROM meters m
+        LEFT JOIN buildings b ON m.building_id = b.id
+        ORDER BY b.name ASC, m.meter_name ASC
+    ";
+    return $db->query($sql)->fetchAll();
+}
+
+/**
+ * Fetches a single meter by its ID.
+ */
+function getMeterById(int $id): ?array
+{
+    $db = DB::getInstance();
+    $meter = $db->query("SELECT * FROM meters WHERE id = :id", [':id' => $id])->fetch();
+    return $meter ?: null;
+}
+
+/**
+ * Updates an existing meter.
+ */
+function updateMeter(array $data, int $id): array
+{
+    $db = DB::getInstance();
+    try {
+        $db->query("UPDATE meters SET building_id=:building_id, meter_name=:meter_name, meter_type=:meter_type, status=:status WHERE id=:id", [
+            ':building_id' => (int)getInput($data, 'building_id'),
+            ':meter_name'  => getInput($data, 'meter_name'),
+            ':meter_type'  => getInput($data, 'meter_type'),
+            ':status'      => (int)(getInput($data, 'status') === '1'),
+            ':id'          => $id
+        ]);
+        return ['status' => 'success', 'message' => 'Meter updated successfully!'];
+    } catch (Exception $e) {
+        if ($e->getCode() == 23000) {
+            return ['status' => 'error', 'message' => 'A meter with this name already exists for the selected building.'];
+        }
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Deletes a meter.
+ */
+function deleteMeter(int $id): array
+{
+    $db = DB::getInstance();
+    try {
+        $db->query("DELETE FROM meters WHERE id = :id", [':id' => $id]);
+        return ['status' => 'success', 'message' => 'Meter deleted successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}

@@ -16,6 +16,9 @@ switch(basename($_SERVER['PHP_SELF'])) {
         if(function_exists('unitsJS')) unitsJS(); // Make sure this line is active
         break;
     // add other page-specific JS as needed
+    case "meters.php":
+        if(function_exists('metersJS')) metersJS();
+        break;
 }
 ?>
 

@@ -156,6 +156,67 @@ function tenantsJS() {
 
 
 <?php
+function metersJS() {
+    ?>
+    <script>
+        $(document).ready(function() {
+            // Initialize DataTable
+            $('#metersTable').DataTable({
+                responsive: true,
+                autoWidth: false
+            });
+
+            // Handle form submission with AJAX
+            $('#meterForm').on('submit', function(e) {
+                e.preventDefault();
+                var formData = $(this).serialize();
+                $.ajax({
+                    url: 'meters.php',
+                    type: 'POST',
+                    data: formData,
+                    success: function(response) {
+                        // Close modal and reload page on success
+                        $('#meterModal').modal('hide');
+                        location.reload(); 
+                    },
+                    error: function() {
+                        alert('An error occurred. Please try again.');
+                    }
+                });
+            });
+        });
+
+        // Function to open the Add Meter form
+        window.openAddMeterForm = function() {
+            $('#formTitle').text('Add Meter');
+            $('#meterForm')[0].reset();
+            $('#meter_id').val('');
+            $('#status').prop('checked', true); // Default to active
+            $('#submitBtn').text('Add Meter');
+        }
+
+        // Function to edit a meter
+        window.editMeter = function(m) {
+            $('#formTitle').text('Edit Meter');
+            $('#meter_id').val(m.id);
+            $('#building_id').val(m.building_id);
+            $('#meter_name').val(m.meter_name);
+            
+            // Set the correct radio button for meter type
+            $('input[name="meter_type"][value="' + m.meter_type + '"]').prop('checked', true);
+            
+            // Set the status switch
+            $('#status').prop('checked', m.status == 1);
+            
+            $('#submitBtn').text('Update Meter');
+            $('#meterModal').modal('show');
+        }
+    </script>
+    <?php
+}
+?>
+
+<?php
 function tenantUnitJS() { ?>
 <script>
 $(document).ready(function(){
