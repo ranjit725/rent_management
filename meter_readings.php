@@ -3,7 +3,12 @@ require_once 'config/master.php';
 
 // --- Controller Logic ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $result = addMeterReading($_POST, $_FILES);
+    if (!empty($_POST['reading_id'])) {
+        $reading_id = (int)$_POST['reading_id'];
+        $result = updateMeterReading($_POST, $_FILES, $reading_id);
+    } else {
+        $result = addMeterReading($_POST, $_FILES);
+    }
     $_SESSION['flash_message'] = $result;
     header("Location: meter_readings.php");
     exit;
@@ -46,120 +51,88 @@ unset($_SESSION['flash_message']);
             <div class="card-body">
                 <h5 class="card-title">Add New Reading</h5>
                 
-                <form method="POST" id="readingForm" enctype="multipart/form-data" class="row g-3">
+                <!-- START: Meter Reading Form -->
+<form method="POST" id="readingForm" enctype="multipart/form-data" class="row g-3">
 
-                    <!-- Meter -->
-                    <div class="col-md-6">
-                        <label class="form-label">Meter *</label>
-                        <select name="meter_id" id="meter_id" class="form-control" required>
-                            <option value="">-- Select Meter --</option>
-                            <?php foreach ($meters as $m): ?>
-                                <option value="<?= (int)$m['id'] ?>">
-                                    <?= htmlspecialchars($m['building_name']) ?> → <?= htmlspecialchars($m['meter_name']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
+    <!-- HIDDEN FIELD FOR EDITING -->
+    <!-- This field is empty when adding a new reading and filled with an ID when editing. -->
+    <input type="hidden" name="reading_id" id="reading_id" value="">
 
-                    <!-- Reading Date -->
-                    <div class="col-md-6">
-                        <label class="form-label">Reading Date *</label>
-                        <input type="date"
-                            name="reading_date"
-                            id="reading_date"
-                            class="form-control"
-                            value="<?php echo date('Y-m-d'); ?>" 
-                            required>
-                    </div>
+    <!-- METER & DATE SELECTION -->
+    <div class="col-md-6">
+        <label class="form-label">Meter *</label>
+        <select name="meter_id" id="meter_id" class="form-control" required>
+            <option value="">-- Select Meter --</option>
+            <?php foreach ($meters as $m): ?>
+                <option value="<?= (int)$m['id'] ?>">
+                    <?= htmlspecialchars($m['building_name']) ?> → <?= htmlspecialchars($m['meter_name']) ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+    </div>
 
-                    <!-- Last Reading Info -->
-                    <div class="col-12">
-                        <small id="last_reading_info" class="text-muted"></small>
-                    </div>
+    <div class="col-md-6">
+        <label class="form-label">Reading Date *</label>
+        <input type="date" name="reading_date" id="reading_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required>
+    </div>
 
-                    <!-- Previous Reading -->
-                    <div class="col-md-6">
-                        <label class="form-label">Previous Reading *</label>
+    <!-- LAST READING INFO (DISPLAY ONLY) -->
+    <div class="col-12">
+        <small id="last_reading_info" class="text-muted"></small>
+    </div>
 
-                        <!-- Visible field -->
-                        <input type="number"
-                            step="1"
-                            id="previous_reading"
-                            class="form-control"
-                            value="0"
-                            min="0"
-                            readonly>
+    <!-- READING DETAILS -->
+    <div class="col-md-6">
+        <label class="form-label">Previous Reading</label>
+        <!-- This field is now submitted with the form. It's readonly to prevent manual changes. -->
+        <input type="number" step="1" name="previous_reading" id="previous_reading" class="form-control" value="0" min="0" readonly>
+    </div>
 
-                        <!-- Hidden field for form submit -->
-                        <input type="hidden"
-                            name="previous_reading"
-                            id="previous_reading_hidden">
-                    </div>
+    <div class="col-md-6">
+        <label class="form-label">Current Reading *</label>
+        <input type="number" step="1" name="current_reading" id="current_reading" class="form-control" min="0" placeholder="Enter meter reading" required>
+    </div>
 
-                    <!-- Current Reading -->
-                    <div class="col-md-6">
-                        <label class="form-label">Current Reading *</label>
-                        <input type="number"
-                            step="1"
-                            name="current_reading"
-                            id="current_reading"
-                            class="form-control"
-                            min="0"
-                            placeholder="Enter meter reading"
-                            required>
-                    </div>
+    <div class="col-md-4">
+        <label class="form-label">Units Consumed</label>
+        <input type="number" step="1" id="units_consumed" class="form-control" readonly>
+    </div>
 
-                    <!-- Units -->
-                    <div class="col-md-4">
-                        <label class="form-label">Units Consumed</label>
-                        <input type="number"
-                            step="1"
-                            id="units_consumed"
-                            class="form-control"
-                            readonly>
-                    </div>
+    <div class="col-md-4">
+        <label class="form-label">Per Unit Rate</label>
+        <input type="number" step="0.01" name="per_unit_rate" id="per_unit_rate" class="form-control" value="8.50" required>
+    </div>
 
-                    <!-- Rate -->
-                    <div class="col-md-4">
-                        <label class="form-label">Per Unit Rate</label>
-                        <input type="number"
-                            step="0.01"
-                            name="per_unit_rate"
-                            id="per_unit_rate"
-                            class="form-control"
-                            value="8.50"
-                            required>
-                    </div>
+    <div class="col-md-4">
+        <label class="form-label">Total Amount</label>
+        <input type="number" step="0.01" id="total_amount" class="form-control" readonly>
+    </div>
 
-                    <!-- Total -->
-                    <div class="col-md-4">
-                        <label class="form-label">Total Amount</label>
-                        <input type="number"
-                            step="0.01"
-                            id="total_amount"
-                            class="form-control"
-                            readonly>
-                    </div>
+    <!-- IMAGE UPLOAD SECTION -->
+    <!-- This container is only visible when editing a record that already has an image. -->
+    <div class="col-12" id="current_image_container" style="display: none;">
+        <label class="form-label">Current Image</label>
+        <div>
+            <img id="current_image_preview" src="" alt="Current Meter Reading" style="max-width: 150px; max-height: 150px; border: 1px solid #ddd; padding: 5px;">
+            <small class="text-muted d-block">Upload a new image below to replace this one.</small>
+        </div>
+    </div>
 
-                    <!-- Photo -->
-                    <div class="col-12">
-                        <label class="form-label">Meter Photo</label>
-                        <input type="file"
-                            name="image_path"
-                            class="form-control"
-                            accept="image/*"
-                            capture="environment">
-                        <small class="text-muted">Optional (Max 2MB) — You can take a photo using your camera.</small>
-                    </div>
+    <div class="col-12">
+        <label class="form-label">Meter Photo</label>
+        <input type="file" name="image_path" class="form-control" accept="image/*">
+        <small class="text-muted">Optional (Max 2MB) — You can take a photo using your camera.</small>
+    </div>
 
-                    <!-- Submit -->
-                    <div class="col-12">
-                        <button type="submit" class="btn btn-primary">
-                            Save Reading
-                        </button>
-                    </div>
+    <!-- FORM ACTION BUTTONS -->
+    <div class="col-12">
+        <button type="submit" class="btn btn-primary" id="submitBtn">Save Reading</button>
+        <!-- This "Cancel" button only appears when editing. It resets the form. -->
+        <button type="button" class="btn btn-secondary" id="cancelBtn" style="display:none;" onclick="resetForm()">Cancel</button>
+    </div>
 
-                </form>
+</form>
+<!-- END: Meter Reading Form -->
             </div>
         </div>
 
@@ -208,9 +181,10 @@ unset($_SESSION['flash_message']);
                                         </td>
 
                                         <td>
-                                            <a href="?action=delete&id=<?= (int)$r['id'] ?>"
-                                            class="btn btn-sm btn-danger"
-                                            onclick="return confirm('Are you sure?')">
+                                            <button class="btn btn-sm btn-warning" onclick="editMeterReading(<?= htmlspecialchars(json_encode($r)) ?>)">
+                                                <i class="fa fa-edit"></i>
+                                            </button>
+                                            <a href="?action=delete&id=<?= (int)$r['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">
                                                 <i class="fa fa-trash"></i>
                                             </a>
                                         </td>

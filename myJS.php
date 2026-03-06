@@ -260,127 +260,143 @@ function meterReadingsJS() {
 <script src="https://cdn.datatables.net/responsive/2.5.0/js/responsive.bootstrap5.min.js"></script>
 
 <script>
-$(document).ready(function() {
+        $(document).ready(function() {
 
-    // Initialize DataTable
-    $('#readingsTable').DataTable({
-        responsive: true,
-        autoWidth: false,
-        order: [[0, 'desc']]
-    });
+            // Initialize DataTable
+            $('#readingsTable').DataTable({
+                responsive: true,
+                autoWidth: false,
+                order: [[0, 'desc']] // Sort by the first column (ID) descending
+            });
 
-    // Set default date to today
-    $('#reading_date').val(new Date().toISOString().split('T')[0]);
+            // --- CALCULATION LOGIC ---
+            function calculateTotals() {
+                let current = parseFloat($('#current_reading').val()) || 0;
+                let previous = parseFloat($('#previous_reading').val()) || 0;
+                let rate = parseFloat($('#per_unit_rate').val()) || 0;
 
-    // Calculation function
-    function calculateTotals() {
+                // Ensure units are not negative
+                let units = (current - previous > 0) ? (current - previous) : 0;
+                let total = units * rate;
 
-        let current = parseFloat($('#current_reading').val()) || 0;
-        let previous = parseFloat($('#previous_reading').val()) || 0;
-        let rate = parseFloat($('#per_unit_rate').val()) || 0;
+                $('#units_consumed').val(units);
+                $('#total_amount').val(total.toFixed(2));
+            }
 
-        let units = current - previous;
-
-        if (units < 0) {
-            units = 0;
-        }
-
-        let total = units * rate;
-
-        $('#units_consumed').val(units);
-        $('#total_amount').val(total.toFixed(2));
-    }
-
-    // Recalculate on input
-    $('#current_reading, #per_unit_rate').on('input', calculateTotals);
+            // Recalculate when current reading or rate changes
+            $('#current_reading, #per_unit_rate').on('input', calculateTotals);
 
 
-    // Load last meter reading
-    $('#meter_id').on('change', function() {
+            // --- LOAD PREVIOUS READING LOGIC ---
+            $('#meter_id').on('change', function() {
+                let meterId = $(this).val();
 
-        let meterId = $(this).val();
-
-        if (!meterId) {
-
-            $('#previous_reading').val('');
-            $('#previous_reading_hidden').val('');
-            $('#last_reading_info').text('');
-
-            calculateTotals();
-            return;
-        }
-
-        $.ajax({
-            url: 'api/get_last_reading.php',
-            type: 'GET',
-            data: { meter_id: meterId },
-            dataType: 'json',
-
-            success: function(response) {
-
-                if (response.success && response.data) {
-
-                    let prev = response.data.current_reading;
-
-                    $('#previous_reading').val(prev);
-                    $('#previous_reading_hidden').val(prev);
-
-                    let d = new Date(response.data.reading_date);
-
-                    let formattedDate = d.toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric'
-                    });
-
-                    $('#last_reading_info').text(
-                        'Last Reading: ' + prev + ' (' + formattedDate + ')'
-                    );
-
-                } else {
-
+                // Reset fields if no meter is selected
+                if (!meterId) {
                     $('#previous_reading').val(0);
-                    $('#previous_reading_hidden').val(0);
-
-                    $('#last_reading_info').text('No previous reading found');
+                    $('#last_reading_info').text('');
+                    calculateTotals();
+                    return;
                 }
 
+                // Fetch the last reading for the selected meter via AJAX
+                $.ajax({
+                    url: 'api/get_last_reading.php',
+                    type: 'GET',
+                    data: { meter_id: meterId },
+                    dataType: 'json',
+                    success: function(response) {
+                        if (response.success && response.data) {
+                            let prev = response.data.current_reading;
+                            $('#previous_reading').val(prev);
+                            
+                            let d = new Date(response.data.reading_date);
+                            let formattedDate = d.toLocaleDateString('en-IN', {
+                                day: 'numeric',
+                                month: 'short',
+                                year: 'numeric'
+                            });
+                            $('#last_reading_info').text('Last Reading: ' + prev + ' (' + formattedDate + ')');
+                        } else {
+                            // If no previous reading, set to 0
+                            $('#previous_reading').val(0);
+                            $('#last_reading_info').text('No previous reading found for this meter.');
+                        }
+                        calculateTotals();
+                    },
+                    error: function() {
+                        $('#previous_reading').val(0);
+                        $('#last_reading_info').text('Error loading previous reading.');
+                        calculateTotals();
+                    }
+                });
+            });
+
+            // --- VALIDATION LOGIC ---
+            $('#current_reading').on('blur', function() {
+                let previous = parseFloat($('#previous_reading').val()) || 0;
+                let current = parseFloat($(this).val()) || 0;
+
+                if (current < previous) {
+                    alert('Current reading cannot be less than the previous reading.');
+                    $(this).val(''); // Clear the invalid input
+                    calculateTotals(); // Recalculate to clear units/total
+                }
+            });
+
+            // --- EDIT MODE LOGIC ---
+            // This function is called from the "Edit" button in the table
+            window.editMeterReading = function(data) {
+                 console.log("Edit Data:", data);
+    console.log("Meter ID:", data.meter_id);
+                // Populate form fields with data from the table row
+                $('#reading_id').val(data.id);
+                $('#meter_id').val(data.meter_id).trigger('change'); // Trigger change to load last reading info
+                $('#reading_date').val(data.reading_date);
+                $('#current_reading').val(data.current_reading);
+                $('#per_unit_rate').val(data.per_unit_rate);
+
+                // In edit mode, we manually set the previous reading and don't rely on the AJAX call
+                $('#previous_reading').val(data.previous_reading);
+                
+                // Show the current image if it exists
+                if (data.image_path) {
+                    $('#current_image_preview').attr('src', data.image_path);
+                    $('#current_image_container').show();
+                } else {
+                    $('#current_image_container').hide();
+                }
+
+                // Update UI for editing mode
+                $('#submitBtn').text('Update Reading');
+                $('#cancelBtn').show();
+                
+                // Trigger calculation to update the totals
                 calculateTotals();
-            },
+                
+                // Scroll to the form for better user experience
+                $('html, body').animate({
+                    scrollTop: $("#readingForm").offset().top
+                }, 500);
+            };
 
-            error: function() {
+            // --- RESET FORM LOGIC ---
+            // This function resets the form back to "Add" mode
+            window.resetForm = function() {
+                $('#readingForm')[0].reset(); // Resets all form fields
+                $('#reading_id').val(''); // Clears the hidden ID
+                $('#last_reading_info').text(''); // Clears the last reading info text
+                $('#current_image_container').hide(); // Hides the image preview
+                $('#submitBtn').text('Save Reading'); // Resets button text
+                $('#cancelBtn').hide(); // Hides the cancel button
+                calculateTotals(); // Clears calculated values
+            };
 
-                $('#previous_reading').val('');
-                $('#previous_reading_hidden').val('');
+            // Attach the resetForm function to the cancel button's click event
+            $('#cancelBtn').on('click', resetForm);
 
-                $('#last_reading_info').text('Error loading previous reading');
-
-                calculateTotals();
-            }
         });
-
-    });
-
-
-    // Prevent invalid reading
-    $('#current_reading').on('blur', function() {
-
-        let previous = parseFloat($('#previous_reading').val()) || 0;
-        let current = parseFloat($(this).val()) || 0;
-
-        if (current < previous) {
-
-            alert('Current reading cannot be less than previous reading.');
-
-            $(this).val('');
-            $('#units_consumed').val('');
-            $('#total_amount').val('');
-        }
-
-    });
-
-});
-</script>
+    </script>
 
 <?php
 }

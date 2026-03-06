@@ -494,7 +494,7 @@ function getLastReadingForMeter(int $meter_id): ?array
 
 /**
  * Creates a new meter reading.
- * Handles file upload and checks for duplicate entries.
+ * Handles file upload with robust error checking.
  */
 function addMeterReading(array $data, array $file = null): array
 {
@@ -510,13 +510,31 @@ function addMeterReading(array $data, array $file = null): array
 
     // Handle file upload
     $image_path = null;
-    if ($file && $file['image_path']['error'] === UPLOAD_ERR_OK) {
+    if ($file && isset($file['image_path']) && $file['image_path']['error'] === UPLOAD_ERR_OK) {
         $upload_dir = 'uploads/meter_readings/';
+        // Ensure the directory exists
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+
         $file_name = time() . '_' . basename($file['image_path']['name']);
         $target_file = $upload_dir . $file_name;
+
+        // Validate the file (optional but recommended)
+        $check = getimagesize($file['image_path']['tmp_name']);
+        if ($check === false) {
+            return ['status' => 'error', 'message' => 'File is not a valid image.'];
+        }
+
         if (move_uploaded_file($file['image_path']['tmp_name'], $target_file)) {
             $image_path = $target_file;
+        } else {
+            // This is a common failure point, provide a clear message
+            return ['status' => 'error', 'message' => 'Failed to move uploaded file. Please check directory permissions for ' . $upload_dir];
         }
+    } elseif ($file && isset($file['image_path']) && $file['image_path']['error'] !== UPLOAD_ERR_NO_FILE) {
+        // Handle other upload errors
+        return ['status' => 'error', 'message' => 'File upload error code: ' . $file['image_path']['error']];
     }
 
     try {
@@ -532,10 +550,67 @@ function addMeterReading(array $data, array $file = null): array
         ]);
         return ['status' => 'success', 'message' => 'Meter reading added successfully!'];
     } catch (Exception $e) {
-        // Handle potential duplicate entry error
+        // If DB insert fails, delete the uploaded image if it was saved
+        if ($image_path && file_exists($image_path)) {
+            unlink($image_path);
+        }
         if ($e->getCode() == 23000) {
             return ['status' => 'error', 'message' => 'A reading for this meter already exists on this date.'];
         }
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Updates an existing meter reading.
+ * Handles replacing the old image if a new one is uploaded.
+ */
+function updateMeterReading(array $data, array $file = null, int $id): array
+{
+    $db = DB::getInstance();
+    
+    // Fetch current reading data to get the old image path
+    $current_data = $db->query("SELECT image_path FROM meter_readings WHERE id = :id", [':id' => $id])->fetch();
+    if (!$current_data) {
+        return ['status' => 'error', 'message' => 'Reading not found.'];
+    }
+    $old_image_path = $current_data['image_path'];
+
+    // Handle new file upload
+    $new_image_path = $old_image_path; // Default to old path
+    if ($file && isset($file['image_path']) && $file['image_path']['error'] === UPLOAD_ERR_OK) {
+        $upload_dir = 'uploads/meter_readings/';
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+        $file_name = time() . '_' . basename($file['image_path']['name']);
+        $target_file = $upload_dir . $file_name;
+
+        if (move_uploaded_file($file['image_path']['tmp_name'], $target_file)) {
+            // If new file is uploaded successfully, delete the old one
+            if ($old_image_path && file_exists($old_image_path)) {
+                unlink($old_image_path);
+            }
+            $new_image_path = $target_file;
+        }
+    }
+
+    try {
+        $sql = "UPDATE meter_readings SET 
+                    reading_date = :reading_date, 
+                    current_reading = :current_reading, 
+                    per_unit_rate = :per_unit_rate, 
+                    image_path = :image_path
+                WHERE id = :id";
+        $db->query($sql, [
+            ':reading_date' => getInput($data, 'reading_date'),
+            ':current_reading' => (int)getInput($data, 'current_reading'),
+            ':per_unit_rate' => (float)getInput($data, 'per_unit_rate'),
+            ':image_path' => $new_image_path,
+            ':id' => $id,
+        ]);
+        return ['status' => 'success', 'message' => 'Meter reading updated successfully!'];
+    } catch (Exception $e) {
         return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
     }
 }
@@ -548,7 +623,7 @@ function getMeterReadings(): array
     $db = DB::getInstance();
     $sql = "
         SELECT 
-            mr.id, mr.reading_date, mr.previous_reading, mr.current_reading, 
+            mr.id, mr.meter_id, mr.reading_date, mr.previous_reading, mr.current_reading, 
             mr.per_unit_rate, mr.image_path,
             (mr.current_reading - mr.previous_reading) AS units_consumed,
             (mr.current_reading - mr.previous_reading) * mr.per_unit_rate AS total_amount,
