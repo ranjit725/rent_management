@@ -47,6 +47,11 @@
             if (function_exists('meterReadingsCSS')) meterReadingsCSS();
             echo '<title>Meter Readings</title>';
             break;
+
+        case "rent_history.php":
+            if (function_exists('rentHistoryCSS')) rentHistoryCSS();
+            echo '<title>Rent History</title>';
+            break;
         // Add more pages as needed
     }
     ?>

@@ -24,6 +24,9 @@
             </ul>
         </li>
 
+        <li class="<?= $currentPage === 'rent_history.php' ? 'active' : '' ?>">
+            <a href="rent_history.php"><i class="fa fa-history"></i> Rent History</a>
+        </li>
         <li class="<?= $currentPage === 'tenants.php' ? 'active' : '' ?>">
             <a href="tenants.php"><i class="fa fa-users"></i> Tenants</a>
         </li>

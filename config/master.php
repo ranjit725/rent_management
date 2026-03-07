@@ -659,3 +659,108 @@ function deleteMeterReading(int $id): array
         return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
     }
 }
+
+/**
+ * Fetches all rent history records, joined with unit and building info.
+ * Corrected to use 'b.name' for the building table column.
+ */
+function getRentHistory(): array
+{
+    $db = DB::getInstance();
+    $sql = "SELECT rh.*, u.unit_name, b.name AS building_name 
+            FROM rent_history rh
+            JOIN units u ON rh.unit_id = u.id
+            JOIN buildings b ON u.building_id = b.id
+            ORDER BY b.name, u.unit_name, rh.effective_from DESC";
+    return $db->query($sql)->fetchAll();
+}
+
+/**
+ * Adds a new rent history entry.
+ * This function is smart: it finds the previous "current" rent for the unit
+ * and sets its `effective_to` date to the day before the new rent starts.
+ */
+function addRentHistory(array $data): array
+{
+    $db = DB::getInstance();
+    $unit_id = (int)$data['unit_id'];
+    $rent_amount = (float)$data['rent_amount'];
+    $effective_from = $data['effective_from'];
+
+    try {
+        $db->beginTransaction();
+
+        // 1. Find the currently active rent for this unit (where effective_to is NULL)
+        $stmt = $db->query("SELECT id FROM rent_history WHERE unit_id = :unit_id AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1", [':unit_id' => $unit_id]);
+        $current_rent = $stmt->fetch();
+
+        if ($current_rent) {
+            // 2. If found, update its `effective_to` date to the day before the new one starts
+            $new_end_date = date('Y-m-d', strtotime($effective_from . ' -1 day'));
+            $update_sql = "UPDATE rent_history SET effective_to = :new_end_date WHERE id = :id";
+            $db->query($update_sql, [':new_end_date' => $new_end_date, ':id' => $current_rent['id']]);
+        }
+
+        // 3. Insert the new rent history record
+        $insert_sql = "INSERT INTO rent_history (unit_id, rent_amount, effective_from, effective_to) 
+                        VALUES (:unit_id, :rent_amount, :effective_from, NULL)";
+        $db->query($insert_sql, [
+            ':unit_id' => $unit_id,
+            ':rent_amount' => $rent_amount,
+            ':effective_from' => $effective_from,
+        ]);
+
+        $db->commit();
+        return ['status' => 'success', 'message' => 'Rent history added successfully!'];
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Updates an existing rent history entry.
+ */
+function updateRentHistory(array $data, int $id): array
+{
+    $db = DB::getInstance();
+    $sql = "UPDATE rent_history SET 
+                unit_id = :unit_id, 
+                rent_amount = :rent_amount, 
+                effective_from = :effective_from,
+                effective_to = :effective_to
+            WHERE id = :id";
+    try {
+        $db->query($sql, [
+            ':unit_id' => (int)$data['unit_id'],
+            ':rent_amount' => (float)$data['rent_amount'],
+            ':effective_from' => $data['effective_from'],
+            ':effective_to' => !empty($data['effective_to']) ? $data['effective_to'] : null,
+            ':id' => $id
+        ]);
+        return ['status' => 'success', 'message' => 'Rent history updated successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Deletes a rent history entry.
+ * Prevents deletion of the currently active rent.
+ */
+function deleteRentHistory(int $id): array
+{
+    $db = DB::getInstance();
+    $check = $db->query("SELECT id FROM rent_history WHERE id = :id AND effective_to IS NULL", [':id' => $id])->fetch();
+    if ($check) {
+        return ['status' => 'error', 'message' => 'Cannot delete the currently active rent history.'];
+    }
+
+    try {
+        $db->query("DELETE FROM rent_history WHERE id = :id", [':id' => $id]);
+        return ['status' => 'success', 'message' => 'Rent history deleted successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}
