@@ -686,16 +686,23 @@ function addRentHistory(array $data): array
     $unit_id = (int)$data['unit_id'];
     $rent_amount = (float)$data['rent_amount'];
     $effective_from = $data['effective_from'];
+    $effective_to = !empty($data['effective_to']) ? $data['effective_to'] : null;
+
+    // --- NEW: Backend Validation ---
+    if ($effective_to && strtotime($effective_from) > strtotime($effective_to)) {
+        return ['status' => 'error', 'message' => 'The "Effective From" date cannot be after the "Effective To" date.'];
+    }
+    // --- End of Validation ---
 
     try {
         $db->beginTransaction();
 
-        // 1. Find the currently active rent for this unit (where effective_to is NULL)
+        // 1. Find the currently active rent for this unit
         $stmt = $db->query("SELECT id FROM rent_history WHERE unit_id = :unit_id AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1", [':unit_id' => $unit_id]);
         $current_rent = $stmt->fetch();
 
         if ($current_rent) {
-            // 2. If found, update its `effective_to` date to the day before the new one starts
+            // 2. Update its `effective_to` date
             $new_end_date = date('Y-m-d', strtotime($effective_from . ' -1 day'));
             $update_sql = "UPDATE rent_history SET effective_to = :new_end_date WHERE id = :id";
             $db->query($update_sql, [':new_end_date' => $new_end_date, ':id' => $current_rent['id']]);
@@ -715,7 +722,9 @@ function addRentHistory(array $data): array
 
     } catch (Exception $e) {
         $db->rollBack();
-        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+        // You might want to log the actual error here for debugging
+        // error_log($e->getMessage()); 
+        return ['status' => 'error', 'message' => 'Database error: Could not save rent history.'];
     }
 }
 
@@ -725,6 +734,15 @@ function addRentHistory(array $data): array
 function updateRentHistory(array $data, int $id): array
 {
     $db = DB::getInstance();
+    $effective_from = $data['effective_from'];
+    $effective_to = !empty($data['effective_to']) ? $data['effective_to'] : null;
+
+    // --- NEW: Backend Validation ---
+    if ($effective_to && strtotime($effective_from) > strtotime($effective_to)) {
+        return ['status' => 'error', 'message' => 'The "Effective From" date cannot be after the "Effective To" date.'];
+    }
+    // --- End of Validation ---
+
     $sql = "UPDATE rent_history SET 
                 unit_id = :unit_id, 
                 rent_amount = :rent_amount, 
@@ -735,13 +753,14 @@ function updateRentHistory(array $data, int $id): array
         $db->query($sql, [
             ':unit_id' => (int)$data['unit_id'],
             ':rent_amount' => (float)$data['rent_amount'],
-            ':effective_from' => $data['effective_from'],
-            ':effective_to' => !empty($data['effective_to']) ? $data['effective_to'] : null,
+            ':effective_from' => $effective_from,
+            ':effective_to' => $effective_to,
             ':id' => $id
         ]);
         return ['status' => 'success', 'message' => 'Rent history updated successfully!'];
     } catch (Exception $e) {
-        return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+        // error_log($e->getMessage());
+        return ['status' => 'error', 'message' => 'Database error: Could not update rent history.'];
     }
 }
 
@@ -762,5 +781,108 @@ function deleteRentHistory(int $id): array
         return ['status' => 'success', 'message' => 'Rent history deleted successfully!'];
     } catch (Exception $e) {
         return ['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Fetches all meter-to-tenant mappings with details.
+ */
+/**
+ * Fetches all meter-to-tenant mappings with details.
+ */
+function getMeterTenantMappings(): array
+{
+    $db = DB::getInstance();
+    // CORRECTED: Changed t.tenant_name to t.name
+    $sql = "SELECT mtm.*, m.meter_name, b.name AS building_name, t.name AS tenant_name 
+            FROM meter_tenant_mapping mtm
+            JOIN meters m ON mtm.meter_id = m.id
+            JOIN tenants t ON mtm.tenant_id = t.id
+            JOIN buildings b ON m.building_id = b.id
+            ORDER BY b.name, m.meter_name, mtm.effective_from DESC";
+    return $db->query($sql)->fetchAll();
+}
+
+/**
+ * Adds a new meter-to-tenant mapping.
+ * Since sharing is allowed, we simply insert the new record.
+ */
+function addMeterTenantMapping(array $data): array
+{
+    $db = DB::getInstance();
+    $effective_from = $data['effective_from'];
+    $effective_to = !empty($data['effective_to']) ? $data['effective_to'] : null;
+
+    // Backend Validation
+    if ($effective_to && strtotime($effective_from) > strtotime($effective_to)) {
+        return ['status' => 'error', 'message' => 'The "Effective From" date cannot be after the "Effective To" date.'];
+    }
+
+    try {
+        $sql = "INSERT INTO meter_tenant_mapping (meter_id, tenant_id, effective_from, effective_to) 
+                VALUES (:meter_id, :tenant_id, :effective_from, :effective_to)";
+        $db->query($sql, [
+            ':meter_id' => (int)$data['meter_id'],
+            ':tenant_id' => (int)$data['tenant_id'],
+            ':effective_from' => $effective_from,
+            ':effective_to' => $effective_to,
+        ]);
+        return ['status' => 'success', 'message' => 'Mapping added successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Database error: Could not save mapping.'];
+    }
+}
+
+/**
+ * Updates an existing meter-to-tenant mapping.
+ */
+function updateMeterTenantMapping(array $data, int $id): array
+{
+    $db = DB::getInstance();
+    $effective_from = $data['effective_from'];
+    $effective_to = !empty($data['effective_to']) ? $data['effective_to'] : null;
+
+    // Backend Validation
+    if ($effective_to && strtotime($effective_from) > strtotime($effective_to)) {
+        return ['status' => 'error', 'message' => 'The "Effective From" date cannot be after the "Effective To" date.'];
+    }
+
+    try {
+        $sql = "UPDATE meter_tenant_mapping SET 
+                    meter_id = :meter_id, 
+                    tenant_id = :tenant_id, 
+                    effective_from = :effective_from,
+                    effective_to = :effective_to
+                WHERE id = :id";
+        $db->query($sql, [
+            ':meter_id' => (int)$data['meter_id'],
+            ':tenant_id' => (int)$data['tenant_id'],
+            ':effective_from' => $effective_from,
+            ':effective_to' => $effective_to,
+            ':id' => $id
+        ]);
+        return ['status' => 'success', 'message' => 'Mapping updated successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Database error: Could not update mapping.'];
+    }
+}
+
+/**
+ * Deletes a meter-to-tenant mapping.
+ * Prevents deletion of a currently active mapping.
+ */
+function deleteMeterTenantMapping(int $id): array
+{
+    $db = DB::getInstance();
+    $check = $db->query("SELECT id FROM meter_tenant_mapping WHERE id = :id AND effective_to IS NULL", [':id' => $id])->fetch();
+    if ($check) {
+        return ['status' => 'error', 'message' => 'Cannot delete a currently active mapping.'];
+    }
+
+    try {
+        $db->query("DELETE FROM meter_tenant_mapping WHERE id = :id", [':id' => $id]);
+        return ['status' => 'success', 'message' => 'Mapping deleted successfully!'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Database error: Could not delete mapping.'];
     }
 }

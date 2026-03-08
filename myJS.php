@@ -481,3 +481,83 @@ function rentHistoryJS() {
     <?php
 }
 ?>
+
+<?php
+/**
+ * JavaScript for the Meter-Tenant Mapping page.
+ */
+function meterTenantMappingJS() {
+    ?>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/responsive/2.5.0/js/dataTables.responsive.min.js"></script>
+<script src="https://cdn.datatables.net/responsive/2.5.0/js/responsive.bootstrap5.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            // Initialize DataTable
+            $('#mappingsTable').DataTable({
+                responsive: true,
+                autoWidth: false,
+                order: [[1, 'desc']] // Sort by Effective From date descending
+            });
+
+            // --- EDIT & RESET LOGIC ---
+            window.editMapping = function(data) {
+                $('#mapping_id').val(data.id);
+                $('#meter_id').val(data.meter_id);
+                $('#tenant_id').val(data.tenant_id);
+                $('#effective_from').val(data.effective_from);
+                $('#effective_to').val(data.effective_to);
+
+                $('#submitBtn').text('Update Mapping');
+                $('#cancelBtn').show();
+
+                // Trigger change to show current tenants info
+                $('#meter_id').trigger('change');
+
+                $('html, body').animate({
+                    scrollTop: $("#mappingForm").offset().top
+                }, 500);
+            };
+
+            window.resetForm = function() {
+                $('#mappingForm')[0].reset();
+                $('#mapping_id').val('');
+                $('#submitBtn').text('Save Mapping');
+                $('#cancelBtn').hide();
+                $('#current_tenants_info').text('');
+            };
+
+            $('#cancelBtn').on('click', resetForm);
+
+            // --- SMART FORM LOGIC ---
+            $('#meter_id').on('change', function() {
+                let meterId = $(this).val();
+                if (!meterId) {
+                    $('#current_tenants_info').text('');
+                    return;
+                }
+
+                $.ajax({
+                    url: 'api/get_current_tenants_for_meter.php',
+                    type: 'GET',
+                    data: { meter_id: meterId },
+                    dataType: 'json',
+                    success: function(response) {
+                        if (response.success) {
+                            $('#current_tenants_info').text('Currently mapped to: ' + response.data);
+                        } else {
+                            $('#current_tenants_info').text('Could not fetch tenant info.');
+                        }
+                    },
+                    error: function() {
+                        $('#current_tenants_info').text('Error fetching tenant info.');
+                    }
+                });
+            });
+
+        });
+    </script>
+    <?php
+}
+?>

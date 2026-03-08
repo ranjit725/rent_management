@@ -52,6 +52,10 @@
             if (function_exists('rentHistoryCSS')) rentHistoryCSS();
             echo '<title>Rent History</title>';
             break;
+        case "meter_tenant_mapping.php":
+            if (function_exists('meterTenantMappingCSS')) meterTenantMappingCSS();
+            echo '<title>Meter-Tenant Mapping</title>';
+            break;
         // Add more pages as needed
     }
     ?>

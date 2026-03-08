@@ -38,6 +38,9 @@
                 <i class="fa fa-clipboard-list"></i> Meter Readings
             </a>
         </li>
+        <li class="<?= $currentPage === 'meter_tenant_mapping.php' ? 'active' : '' ?>">
+            <a href="meter_tenant_mapping.php"><i class="fa fa-link"></i> Meter-Tenant Mapping</a>
+        </li>
         <li class="<?= $currentPage === 'billing.php' ? 'active' : '' ?>">
             <a href="billing.php"><i class="fa fa-file-invoice"></i> Billing</a>
         </li>
