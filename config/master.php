@@ -11,19 +11,108 @@ function getInput(array $data, string $key, bool $htmlEscape = false): string {
 }
 
 // ======== Dashboard Stats ========
-function getDashboardStats(): array
-{
-    $db = DB::getInstance();
+/**
+ * Gathers comprehensive statistics for the professional dashboard.
+ */
+function getDashboardStats() {
+    $db = DB::getInstance(); 
+    $stats = [];
+    $current_month = date('Y-m-01');
 
-    $totalBuildings = $db->fetch("SELECT COUNT(*) as total FROM buildings")['total'] ?? 0;
-    $totalUnits     = $db->fetch("SELECT COUNT(*) as total FROM units")['total'] ?? 0;
-    $totalTenants   = $db->fetch("SELECT COUNT(*) as total FROM tenants WHERE status = 'active'")['total'] ?? 0;
+    // --- 1. Basic Counts ---
+    $stats['total_buildings'] = $db->query("SELECT COUNT(*) as count FROM buildings WHERE status = 1")->fetch()['count'];
+    $stats['total_units'] = $db->query("SELECT COUNT(*) as count FROM units WHERE status = 1")->fetch()['count'];
+    $stats['total_tenants'] = $db->query("SELECT COUNT(*) as count FROM tenants WHERE status = 'active'")->fetch()['count'];
 
-    return [
-        'buildings' => $totalBuildings,
-        'units'     => $totalUnits,
-        'tenants'   => $totalTenants
-    ];
+    // --- 2. Occupancy Calculation ---
+    $occupied = $db->query("SELECT COUNT(DISTINCT unit_id) as count FROM tenant_unit_mapping WHERE (effective_to IS NULL OR effective_to >= CURDATE())")->fetch()['count'];
+    $stats['occupied_units'] = $occupied;
+    $stats['occupancy_rate'] = ($stats['total_units'] > 0) ? round(($occupied / $stats['total_units']) * 100) : 0;
+
+    // --- 3. Financials (Revenue) ---
+    $revenueQuery = "SELECT COALESCE(SUM(rent_amount + electricity_amount + adjustment_amount), 0) as total 
+                     FROM billing WHERE billing_month = :month";
+    $revenue = $db->query($revenueQuery, [':month' => $current_month])->fetch();
+    $stats['monthly_revenue'] = $revenue['total'];
+
+    // --- 4. Meter Readings (No changes here) ---
+    $stats['pending_readings'] = $db->query("
+        SELECT m.id, m.meter_name, b.name as building_name 
+        FROM meters m
+        JOIN buildings b ON m.building_id = b.id
+        WHERE m.status = 1 
+        AND m.id IN (
+            SELECT DISTINCT meter_id 
+            FROM meter_tenant_mapping 
+            WHERE tenant_id IN (SELECT id FROM tenants WHERE status = 'active')
+        ) 
+        AND m.id NOT IN (
+            SELECT meter_id 
+            FROM meter_readings 
+            WHERE DATE_FORMAT(reading_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+        )
+    ")->fetchAll();
+
+    // --- 5. UPDATED: Approach 2 (Liability vs Paid) ---
+    $active_tenants = $db->query("SELECT id, name FROM tenants WHERE status = 'active'")->fetchAll();
+    $unpaid_list = [];
+    $total_pending_amount = 0;
+
+    foreach ($active_tenants as $t) {
+        // A. Get Expectation (What he should pay)
+        $structure = getTenantMonthlyStructure($t['id']);
+        $total_expected = 0;
+        
+        foreach ($structure as $month_key => $data) {
+            // Only count up to current month
+            if ($month_key <= date('Y-m')) {
+                $total_expected += (float)($data['rent'] ?? 0);
+                if (!empty($data['electricity'])) {
+                    foreach ($data['electricity'] as $elec) {
+                        $total_expected += (float)$elec['my_share'];
+                    }
+                }
+            }
+        }
+
+        // B. Get Reality (What he actually paid - Summing all rows)
+        $paid = $db->query("
+            SELECT COALESCE(SUM(rent_amount + electricity_amount + adjustment_amount), 0) as total 
+            FROM billing WHERE tenant_id = :tid", 
+            [':tid' => $t['id']]
+        )->fetch()['total'];
+
+        $debt = $total_expected - $paid;
+
+        // C. If debt exists (> 1 to avoid decimal noise), add to list
+        if ($debt > 1) {
+            $unpaid_list[] = [
+                'tenant_id' => $t['id'],
+                'name'      => $t['name'],
+                'total_due' => $debt,
+                // We use your existing function for the UI string if needed
+                'rent_status' => getTenantDebtString($t['id'], 'rent'),
+                'elec_status' => getTenantDebtString($t['id'], 'elec')
+            ];
+            $total_pending_amount += $debt;
+        }
+    }
+    
+    $stats['unpaid_highlights'] = $unpaid_list;
+    $stats['pending_payments'] = $total_pending_amount;
+
+    // --- 6. Recent Activity (No changes here) ---
+    $stats['recent_activity'] = $db->query("
+        SELECT b.id, b.billing_month,
+        (b.rent_amount + b.electricity_amount + b.adjustment_amount) as total_amount, 
+        t.name AS tenant_name
+        FROM billing b
+        JOIN tenants t ON b.tenant_id = t.id
+        ORDER BY b.created_at DESC
+        LIMIT 5
+    ")->fetchAll();
+
+    return $stats;
 }
 
 // ======== Buildings ========
@@ -886,3 +975,809 @@ function deleteMeterTenantMapping(int $id): array
         return ['status' => 'error', 'message' => 'Database error: Could not delete mapping.'];
     }
 }
+
+/**
+ * Generates a new bill for a tenant for a specific month.
+ * This creates the initial record with a balance. It does NOT handle payments.
+ *
+ * @param array $data Contains 'tenant_id', 'billing_month', 'other_charges', 'adjustment_amount'.
+ * @return array
+ */
+function generateBill(array $data): array
+{
+    $db = DB::getInstance();
+
+    $tenant_id = (int)$data['tenant_id'];
+    $billing_month = $data['billing_month']; // format: Y-m-01
+    $rent_amount = (float)($data['rent_amount'] ?? 0);
+    $electricity_amount = (float)($data['electricity_amount'] ?? 0);
+    $other_charges = (float)($data['other_charges'] ?? 0);
+    $adjustment_amount = (float)($data['adjustment_amount'] ?? 0);
+
+    // Total bill amount
+    $total_amount = $rent_amount + $electricity_amount + $other_charges + $adjustment_amount;
+
+    if ($total_amount == 0) {
+        return ['status' => 'error', 'message' => 'Nothing to bill.'];
+    }
+
+    $db->beginTransaction();
+
+    try {
+
+        // 1️⃣ Insert / Update billing table (ONLY for structure, not balance)
+        $existing = $db->query(
+            "SELECT id FROM billing WHERE tenant_id = ? AND billing_month = ?",
+            [$tenant_id, $billing_month]
+        )->fetch();
+
+        if ($existing) {
+            $db->query(
+                "UPDATE billing 
+                 SET rent_amount = ?, electricity_amount = ?, other_charges = ?, adjustment_amount = ?
+                 WHERE id = ?",
+                [$rent_amount, $electricity_amount, $other_charges, $adjustment_amount, $existing['id']]
+            );
+        } else {
+            $db->query(
+                "INSERT INTO billing 
+                (tenant_id, billing_month, rent_amount, electricity_amount, other_charges, adjustment_amount) 
+                VALUES (?, ?, ?, ?, ?, ?)",
+                [$tenant_id, $billing_month, $rent_amount, $electricity_amount, $other_charges, $adjustment_amount]
+            );
+        }
+
+        // 2️⃣ Insert transaction (MAIN LEDGER ENTRY)
+        $db->query(
+            "INSERT INTO transactions 
+            (tenant_id, billing_month, type, amount, description) 
+            VALUES (?, ?, 'charge', ?, ?)",
+            [
+                $tenant_id,
+                $billing_month,
+                $total_amount, // ✅ POSITIVE
+                "Monthly bill generated"
+            ]
+        );
+
+        $db->commit();
+
+        return [
+            'status' => 'success',
+            'message' => 'Bill generated successfully.'
+        ];
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        return [
+            'status' => 'error',
+            'message' => 'Failed to generate bill: ' . $e->getMessage()
+        ];
+    }
+}
+
+/**
+ * Fetches all bills with tenant, unit, and building details.
+ * The 'status' is now derived from the 'balance' in the view.
+ */
+function getBills(array $filters = []): array
+{
+    $db = DB::getInstance();
+
+    try {
+
+        $where = [];
+        $params = [];
+
+        // Optional filter: tenant_id
+        if (!empty($filters['tenant_id'])) {
+            $where[] = "b.tenant_id = ?";
+            $params[] = (int)$filters['tenant_id'];
+        }
+
+        // Optional filter: month (Y-m format)
+        if (!empty($filters['billing_month'])) {
+            $where[] = "DATE_FORMAT(b.billing_month, '%Y-%m') = ?";
+            $params[] = $filters['billing_month'];
+        }
+
+        $where_sql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
+
+        $sql = "
+        SELECT
+            b.id,
+            b.tenant_id,
+            b.billing_month,
+            b.rent_amount,
+            b.electricity_amount,
+            b.other_charges,
+            b.adjustment_amount,
+
+            t.name AS tenant_name,
+            u.unit_name,
+            bd.name AS building_name,
+
+            (
+                SELECT COALESCE(SUM(tr.amount),0)
+                FROM transactions tr
+                WHERE tr.tenant_id = b.tenant_id
+                AND tr.billing_month <= b.billing_month
+            ) AS running_balance
+
+        FROM billing b
+
+        JOIN tenants t ON b.tenant_id = t.id
+
+        JOIN tenant_unit_mapping tum 
+            ON t.id = tum.tenant_id
+            AND tum.effective_from <= b.billing_month
+            AND (tum.effective_to IS NULL OR tum.effective_to >= b.billing_month)
+
+        JOIN units u ON tum.unit_id = u.id
+        JOIN buildings bd ON u.building_id = bd.id
+
+        $where_sql
+
+        ORDER BY b.tenant_id ASC, b.billing_month DESC
+        ";
+
+        $records = $db->query($sql, $params)->fetchAll();
+
+        // Optional formatting (clean for UI)
+        foreach ($records as &$row) {
+
+            $row['month_label'] = date('M Y', strtotime($row['billing_month']));
+
+            $row['total_amount'] =
+                (float)$row['rent_amount'] +
+                (float)$row['electricity_amount'] +
+                (float)$row['other_charges'] +
+                (float)$row['adjustment_amount'];
+
+            $row['running_balance'] = (float)$row['running_balance'];
+        }
+
+        return [
+            'status' => 'success',
+            'data' => $records
+        ];
+
+    } catch (Exception $e) {
+        return [
+            'status' => 'error',
+            'message' => 'Failed to fetch bills: ' . $e->getMessage()
+        ];
+    }
+}
+
+/**
+ * Processes a payment, applying it to the oldest outstanding balance first.
+ * It updates the billing table and creates a transaction record.
+ *
+ * @param array $data Contains 'tenant_id', 'payment_amount', 'payment_date'.
+ * @return array
+ */
+function processPayment(array $data): array
+{
+    $db = DB::getInstance();
+    $tenant_id = (int)$data['tenant_id'];
+    $payment_amount = (float)$data['payment_amount'];
+    $payment_date = $data['payment_date'];
+
+    if ($payment_amount <= 0) {
+        return ['status' => 'error', 'message' => 'Payment amount must be positive.'];
+    }
+
+    $db->beginTransaction();
+
+    try {
+        $remaining_payment = $payment_amount;
+        $payment_log = [];
+
+        // Get all months where tenant has bills (oldest first)
+        $bills = $db->query(
+            "SELECT billing_month 
+             FROM billing 
+             WHERE tenant_id = ? 
+             ORDER BY billing_month ASC",
+            [$tenant_id]
+        )->fetchAll();
+
+        foreach ($bills as $bill) {
+
+            if ($remaining_payment <= 0) break;
+
+            $billing_month = $bill['billing_month'];
+
+            // 🔥 Calculate running balance till this month
+            $balance = $db->query(
+                "SELECT COALESCE(SUM(amount),0) as balance 
+                 FROM transactions 
+                 WHERE tenant_id = ? AND billing_month <= ?",
+                [$tenant_id, $billing_month]
+            )->fetch()['balance'];
+
+            // Skip if no due
+            if ($balance <= 0) continue;
+
+            $amount_to_apply = min($remaining_payment, $balance);
+
+            // ✅ Insert NEGATIVE payment
+            $db->query(
+                "INSERT INTO transactions 
+                (tenant_id, billing_month, type, amount, description, created_at) 
+                VALUES (?, ?, 'payment', ?, ?, ?)",
+                [
+                    $tenant_id,
+                    $billing_month,
+                    -$amount_to_apply,
+                    "Payment received via dashboard",
+                    $payment_date
+                ]
+            );
+
+            $payment_log[] = "Applied ₹" . number_format($amount_to_apply, 2) . " to " . date('F Y', strtotime($billing_month));
+
+            $remaining_payment -= $amount_to_apply;
+        }
+
+        // ✅ If extra payment → just store as advance (negative balance automatically)
+        if ($remaining_payment > 0) {
+
+            $current_month = date('Y-m-01');
+
+            $db->query(
+                "INSERT INTO transactions 
+                (tenant_id, billing_month, type, amount, description, created_at) 
+                VALUES (?, ?, 'payment', ?, ?, ?)",
+                [
+                    $tenant_id,
+                    $current_month,
+                    -$remaining_payment,
+                    "Advance payment",
+                    $payment_date
+                ]
+            );
+
+            $payment_log[] = "Remaining ₹" . number_format($remaining_payment, 2) . " stored as advance";
+        }
+
+        $db->commit();
+
+        return [
+            'status' => 'success',
+            'message' => "Payment processed successfully! " . implode('; ', $payment_log)
+        ];
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        return [
+            'status' => 'error',
+            'message' => 'Transaction failed: ' . $e->getMessage()
+        ];
+    }
+}
+
+/**
+ * Adds a one-time charge (e.g., late fee, maintenance) to a tenant's bill.
+ * This updates the balance and creates a transaction.
+ *
+ * @param array $data Contains 'tenant_id', 'billing_month', 'amount', 'description'.
+ * @return array
+ */
+function addCharge(array $data): array
+{
+    $db = DB::getInstance();
+    $tenant_id = (int)$data['tenant_id'];
+    $billing_month = date('Y-m-01', strtotime($data['billing_month']));
+    $amount = (float)$data['amount'];
+    $description = $data['description'] ?? 'One-time charge';
+
+    if ($amount <= 0) {
+        return ['status' => 'error', 'message' => 'Charge amount must be positive.'];
+    }
+
+    $db->beginTransaction();
+
+    try {
+        // Update the balance for the corresponding bill
+        $db->query("UPDATE billing SET balance = balance + ? WHERE tenant_id = ? AND billing_month = ?", [$amount, $tenant_id, $billing_month]);
+
+        // Create a transaction record
+        $db->query(
+            "INSERT INTO transactions (tenant_id, billing_month, type, amount, description) VALUES (?, ?, 'charge', ?, ?)",
+            [$tenant_id, $billing_month, $amount, $description]
+        );
+
+        $db->commit();
+        return ['status' => 'success', 'message' => 'Charge added successfully!'];
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        return ['status' => 'error', 'message' => 'Failed to add charge: ' . $e->getMessage()];
+    }
+}
+
+
+
+/**
+ * Helper function to check for duplicate bills.
+ */
+function checkDuplicateBill(int $tenant_id, string $billing_month): bool
+{
+    $db = DB::getInstance();
+    $firstDayOfMonth = date('Y-m-01', strtotime($billing_month));
+    $stmt = $db->prepare("SELECT id FROM billing WHERE tenant_id = ? AND billing_month = ?");
+    $stmt->execute([$tenant_id, $firstDayOfMonth]);
+    return $stmt->fetch() !== false;
+}
+
+/**
+ * Helper function to calculate electricity amount for a tenant in a given month.
+ * (This function remains the same as it was already well-written)
+ */
+function calculateElectricityAmount(int $tenant_id, string $billing_month): float
+{
+    $db = DB::getInstance();
+    $electricity_amount = 0;
+
+    $meters = $db->query("
+        SELECT m.id, m.meter_type
+        FROM meter_tenant_mapping mtm
+        JOIN meters m ON mtm.meter_id = m.id
+        WHERE mtm.tenant_id = :tenant_id
+        AND mtm.effective_from <= :billing_month_start
+        AND (mtm.effective_to IS NULL OR mtm.effective_to >= :billing_month_end)
+    ", [
+        ':tenant_id' => $tenant_id,
+        ':billing_month_start' => $billing_month,
+        ':billing_month_end' => $billing_month
+    ])->fetchAll();
+
+    foreach ($meters as $meter) {
+        $meter_id = $meter['id'];
+        $meter_type = $meter['meter_type'];
+
+        $reading = $db->query("
+            SELECT previous_reading, current_reading, per_unit_rate
+            FROM meter_readings
+            WHERE meter_id = :meter_id
+            AND DATE_FORMAT(reading_date,'%Y-%m') = DATE_FORMAT(:billing_month,'%Y-%m')
+            LIMIT 1
+        ", [
+            ':meter_id' => $meter_id,
+            ':billing_month' => $billing_month
+        ])->fetch();
+
+        if (!$reading) continue;
+
+        $units = $reading['current_reading'] - $reading['previous_reading'];
+        $cost = $units * $reading['per_unit_rate'];
+
+        if ($meter_type === 'personal') {
+            $electricity_amount += $cost;
+        } else {
+            $tenant_count = $db->query("
+                SELECT COUNT(DISTINCT mtm2.tenant_id) as total
+                FROM meter_tenant_mapping mtm2
+                WHERE mtm2.meter_id = :meter_id
+                AND mtm2.effective_from <= :billing_month_start
+                AND (mtm2.effective_to IS NULL OR mtm2.effective_to >= :billing_month_end)
+            ", [
+                ':meter_id' => $meter_id,
+                ':billing_month_start' => $billing_month,
+                ':billing_month_end' => $billing_month
+            ])->fetch();
+
+            $share = ($tenant_count && $tenant_count['total'] > 0) ? $cost / $tenant_count['total'] : 0;
+            $electricity_amount += $share;
+        }
+    }
+    return $electricity_amount;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+ * Phase 1: The FIFO Distribution Engine
+ */
+/**
+ * Phase 1: The Bucket-Filling FIFO Engine
+ */
+/**
+ * Phase 1: The Bucket-Filling FIFO Engine
+ */
+/**
+ * Phase 2: The Synced Entry Engine
+ */
+function processFIFOLedgerEntry($data) {
+    $db = DB::getInstance();
+    
+    $tenant_id = (int)$data['tenant_id'];
+    $rent_pool = (float)($data['rent_amount'] ?? 0);
+    $elec_pool = (float)($data['electricity_amount'] ?? 0); 
+    $adj_pool  = (float)($data['adjustment_amount'] ?? 0);
+
+    if ($tenant_id <= 0) return "Invalid Tenant.";
+
+    try {
+        $db->beginTransaction();
+        $truth = getTenantMonthlyStructure($tenant_id);
+
+        $last_valid_elec_month = null;
+
+        foreach ($truth as $month_key => $month_data) {
+            if ($rent_pool <= 0 && $elec_pool <= 0) break;
+
+            $target_month = $month_data['meta']['date'];
+            $to_insert_rent = 0;
+            $to_insert_elec = 0;
+            $to_insert_adj  = 0; 
+
+            // --- A. Rent: Standard FIFO (Now includes Adjustments) ---
+            if ($rent_pool > 0) {
+                $expected_rent = (float)$month_data['rent'];
+                // UPDATED: Now looks at both Paid + Adjustments
+                $existing = $db->query("SELECT SUM(rent_amount) as paid, SUM(adjustment_amount) as adj 
+                                        FROM billing WHERE tenant_id = :tid AND billing_month = :m", 
+                                       [':tid' => $tenant_id, ':m' => $target_month])->fetch();
+                
+                $already_settled_rent = (float)($existing['paid'] ?? 0) + (float)($existing['adj'] ?? 0);
+                $rent_gap = $expected_rent - $already_settled_rent;
+
+                if ($rent_gap > 0) {
+                    $to_insert_rent = min($rent_pool, $rent_gap);
+                    $rent_pool -= $to_insert_rent;
+                }
+            }
+
+            // --- B. Electricity: Adjusted Reading-Driven FIFO ---
+            if ($elec_pool > 0 && !empty($month_data['electricity'])) {
+                $last_valid_elec_month = $target_month; 
+                $expected_elec = array_sum(array_column($month_data['electricity'], 'my_share'));
+                
+                // UPDATED: Fetch existing payments AND existing adjustments for this specific month
+                $existing = $db->query("SELECT SUM(electricity_amount) as paid, SUM(adjustment_amount) as adj 
+                                        FROM billing WHERE tenant_id = :tid AND billing_month = :m", 
+                                       [':tid' => $tenant_id, ':m' => $target_month])->fetch();
+                
+                $already_paid_elec = (float)($existing['paid'] ?? 0);
+                $already_adj_elec = (float)($existing['adj'] ?? 0);
+
+                // The logic: (Expected + Current Input Adj + Existing DB Adj) - Already Paid
+                // This ensures if -75 exists in DB, the gap becomes 0.
+                $elec_gap = ($expected_elec + $adj_pool + $already_adj_elec) - $already_paid_elec;
+
+                if ($elec_gap > 0) {
+                    $to_insert_elec = min($elec_pool, $elec_gap);
+                    $elec_pool -= $to_insert_elec;
+                    
+                    $to_insert_adj = $adj_pool;
+                    $adj_pool = 0; // Global adjustment consumed
+                }
+            }
+
+            // --- C. Save Row ---
+            if ($to_insert_rent > 0 || $to_insert_elec > 0 || $to_insert_adj != 0) {
+                $db->query("INSERT INTO billing (tenant_id, billing_month, rent_amount, electricity_amount, adjustment_amount) 
+                            VALUES (:tid, :m, :rent, :elec, :adj)", 
+                            [
+                                ':tid'   => $tenant_id, 
+                                ':m'     => $target_month, 
+                                ':rent'  => $to_insert_rent,
+                                ':elec'  => $to_insert_elec, 
+                                ':adj'   => $to_insert_adj 
+                            ]);
+            }
+        }
+
+        // --- D. Final Overflow (Advance Parking) ---
+        // If money is still left in pools, it goes to the NEXT month
+        if ($rent_pool > 0 || $elec_pool > 0) {
+            $rent_month = date('Y-m-01', strtotime("+1 month", strtotime(array_key_last($truth))));
+            $elec_month = $last_valid_elec_month ?? array_key_last($truth);
+
+            if ($rent_pool > 0) {
+                $db->query("INSERT INTO billing (tenant_id, billing_month, rent_amount, electricity_amount, adjustment_amount) 
+                            VALUES (:tid, :m, :rent, 0, 0)", [':tid' => $tenant_id, ':m' => $rent_month, ':rent' => $rent_pool]);
+            }
+            if ($elec_pool > 0) {
+                 $db->query("INSERT INTO billing (tenant_id, billing_month, rent_amount, electricity_amount, adjustment_amount) 
+                            VALUES (:tid, :m, 0, :elec, 0)", [':tid' => $tenant_id, ':m' => $elec_month, ':elec' => $elec_pool]);
+            }
+        }
+
+        $db->commit();
+        return "Ledger updated successfully.";
+    } catch (Exception $e) {
+        $db->rollback();
+        die("Database Error: " . $e->getMessage()); 
+    }
+}
+
+/**
+ * Updated Helper for Electricity
+ */
+function getOldestTargetMonth($tenant_id, $type) {
+    $db = DB::getInstance();
+    $col = ($type == 'rent') ? 'rent_amount' : 'electricity_amount';
+    
+    $last = $db->query("SELECT MAX(billing_month) as m FROM billing WHERE tenant_id = :tid AND $col > 0", [':tid' => $tenant_id])->fetch();
+    return $last['m'] ? date('Y-m-01', strtotime("+1 month", strtotime($last['m']))) : '2026-01-01';
+}
+
+/**
+ * Phase 2: The String Builder
+ */
+/**
+ * Calculates the current pending debt for a tenant by comparing 
+ * the 'Monthly Structure' (Truth) against the 'Billing Table' (Reality).
+ * * Logic: (Expected from Beginning) + (Adjustments) - (Cash Paid)
+ */
+function getTenantDebtString($tenant_id, $type = 'rent') {
+    $db = DB::getInstance();
+    $structure = getTenantMonthlyStructure($tenant_id);
+    
+    $ledger = $db->query("SELECT SUM(rent_amount) as r, SUM(electricity_amount) as e, SUM(adjustment_amount) as a 
+                          FROM billing WHERE tenant_id = ?", [$tenant_id])->fetch();
+
+    $rent_paid = (float)($ledger['r'] ?? 0);
+    $elec_paid = (float)($ledger['e'] ?? 0);
+    $total_adj = (float)($ledger['a'] ?? 0);
+
+    if ($type === 'rent') {
+        $total_expected = 0;
+        $pending_months = [];
+        foreach ($structure as $month => $data) {
+            if ($month > date('Y-m')) break;
+            if ($data['rent'] === null) {
+                return [
+                    'total' => 'Not Fixed', 
+                    'formula_with_sums' => 'Check Rent History', 
+                    'is_advance' => false, 
+                    'is_warning' => true
+                ];
+            }
+            $rate = (float)$data['rent'];
+            if (($total_expected + $rate) > $rent_paid) {
+                $pending_months[] = date('M y', strtotime($month));
+            }
+            $total_expected += $rate;
+        }
+        $gap = $total_expected - $rent_paid;
+        $count = count($pending_months);
+        $formula = $count > 0 ? implode(", ", $pending_months) . " | (₹" . number_format($gap/$count,0) . " x $count = ₹" . number_format($gap, 0) . ")" : "";
+        
+        return [
+            'total' => ($gap <= 0) ? "Settled" : "₹" . number_format($gap, 2), 
+            'formula_with_sums' => $formula, 
+            'is_advance' => ($gap < 0)
+        ];
+
+    } else {
+        $total_elec_expected = 0;
+        $elec_parts = [];
+        $has_any_reading = false;
+
+        foreach ($structure as $month => $data) {
+            if ($month > date('Y-m')) break;
+            $m_label = date('M y', strtotime($month));
+            
+            if (!empty($data['electricity'])) {
+                $has_any_reading = true;
+                foreach ($data['electricity'] as $m) {
+                    $share = (float)$m['my_share'];
+                    $elec_parts[] = "$m_label: ({$m['units']} u x {$m['rate']}" . ($m['sharer_count'] > 1 ? " / {$m['sharer_count']}" : "") . " = " . number_format($share, 0) . ")";
+                    $total_elec_expected += $share;
+                }
+            } else {
+                $elec_parts[] = "<span class='text-danger' style='font-size:0.7rem;'>$m_label: No Meter Mapped</span>";
+            }
+        }
+
+        $elec_gap = ($total_elec_expected + $total_adj) - $elec_paid;
+        
+        if (!$has_any_reading && $elec_paid == 0) {
+            return [
+                'total' => 'No Meter', 
+                'formula_with_sums' => implode("<br>", $elec_parts), 
+                'is_warning' => true,
+                'is_advance' => false // ADDED THIS TO FIX LINE 169
+            ];
+        }
+
+        return [
+            'total' => ($elec_gap <= 0 && $has_any_reading) ? 'Settled' : "₹" . number_format($elec_gap, 2),
+            'formula_with_sums' => implode("<br>", $elec_parts) . (($total_adj != 0) ? " (Adj: $total_adj)" : ""),
+            'is_advance' => ($elec_gap < 0)
+        ];
+    }
+}
+
+function getTenantMonthlyStructure($tenant_id) {
+    $db = DB::getInstance();
+    
+    // 1. Check earliest Unit Mapping
+    $history = $db->query("SELECT MIN(effective_from) as start FROM tenant_unit_mapping 
+                           WHERE tenant_id = :tid", [':tid' => $tenant_id])->fetch();
+    
+    // 2. Check earliest Meter Mapping (This catches Saket's Jan 01 entry)
+    $m_history = $db->query("SELECT MIN(effective_from) as start FROM meter_tenant_mapping 
+                             WHERE tenant_id = :tid", [':tid' => $tenant_id])->fetch();
+    
+    // Pick the earliest of the two
+    $dates = array_filter([$history['start'] ?? null, $m_history['start'] ?? null]);
+    $start_date = !empty($dates) ? min($dates) : '2026-01-01';
+    
+    $current_month = date('Y-m-01', strtotime($start_date));
+    $today = date('Y-m-01');
+    $statement = [];
+
+    while ($current_month <= $today) {
+        $month_key = date('Y-m', strtotime($current_month));
+        
+        $statement[$month_key] = [
+            'meta' => ['date' => $current_month, 'label' => date('F Y', strtotime($current_month))],
+            'rent' => null, 
+            'electricity' => []
+        ];
+
+        // A. Unit/Rent Logic
+        $unitMapping = $db->query("SELECT unit_id FROM tenant_unit_mapping 
+                                    WHERE tenant_id = :tid 
+                                    AND :m BETWEEN effective_from AND IFNULL(effective_to, '2099-12-31') 
+                                    LIMIT 1", [':tid' => $tenant_id, ':m' => $current_month])->fetch();
+
+        if ($unitMapping) {
+            $uid = $unitMapping['unit_id'];
+            $rentRecord = $db->query("SELECT rent_amount FROM rent_history 
+                                      WHERE unit_id = :uid 
+                                      AND :m BETWEEN effective_from AND IFNULL(effective_to, '2099-12-31') 
+                                      LIMIT 1", [':uid' => $uid, ':m' => $current_month])->fetch();
+            
+            if ($rentRecord) {
+                $statement[$month_key]['rent'] = (float)$rentRecord['rent_amount'];
+            }
+        }
+
+        // B. Electricity Logic (This will now find Meter 2 for Saket in Jan/Feb)
+        $mappings = $db->query("SELECT meter_id FROM meter_tenant_mapping 
+                                WHERE tenant_id = :tid 
+                                AND :m BETWEEN effective_from AND IFNULL(effective_to, '2099-12-31')", 
+                                [':tid' => $tenant_id, ':m' => $current_month])->fetchAll();
+
+        foreach ($mappings as $m) {
+            $mid = $m['meter_id'];
+            $reading_start = date('Y-m-01', strtotime("+1 month", strtotime($current_month)));
+            $reading_end   = date('Y-m-t', strtotime($reading_start));
+            
+            $reading = $db->query("SELECT * FROM meter_readings WHERE meter_id = :mid AND reading_date BETWEEN :s AND :e LIMIT 1", 
+                                 [':mid' => $mid, ':s' => $reading_start, ':e' => $reading_end])->fetch();
+
+            if ($reading) {
+                $sharers = $db->query("SELECT GROUP_CONCAT(tenant_id) as ids, COUNT(tenant_id) as total 
+                                       FROM meter_tenant_mapping 
+                                       WHERE meter_id = :mid 
+                                       AND :m BETWEEN effective_from AND IFNULL(effective_to, '2099-12-31')", 
+                                       [':mid' => $mid, ':m' => $current_month])->fetch();
+
+                $units = (float)$reading['current_reading'] - (float)$reading['previous_reading'];
+                $total_cost = $units * (float)$reading['per_unit_rate'];
+                $tenant_share = ($sharers['total'] > 0) ? ($total_cost / (int)$sharers['total']) : 0;
+
+                $statement[$month_key]['electricity'][] = [
+                    'meter_id'     => $mid,
+                    'meter_type'   => ($sharers['total'] > 1) ? 'common' : 'personal',
+                    'reading_date' => $reading['reading_date'],
+                    'prev'         => $reading['previous_reading'],
+                    'curr'         => $reading['current_reading'],
+                    'units'        => $units,
+                    'rate'         => $reading['per_unit_rate'],
+                    'total_amount' => $total_cost,
+                    'sharer_ids'   => $sharers['ids'],
+                    'sharer_count' => $sharers['total'],
+                    'my_share'     => $tenant_share
+                ];
+            }
+        }
+        $current_month = date('Y-m-d', strtotime("+1 month", strtotime($current_month)));
+    }
+    return $statement;
+}
+
+/**
+ * Fetches all active tenants with their Location Context
+ * Replace your existing simple SELECT with this.
+ */
+/**
+ * Fetches active tenants with their current Building and Unit context.
+ * Uses the mapping table to find the current active residence.
+ */
+function getActiveTenantsWithContext() {
+    $db = DB::getInstance();
+    $today = date('Y-m-d');
+    
+    $sql = "SELECT 
+                t.id, 
+                t.name as tenant_name, 
+                u.unit_name, 
+                b.name as building_name 
+            FROM tenants t
+            JOIN tenant_unit_mapping tum ON t.id = tum.tenant_id
+            JOIN units u ON tum.unit_id = u.id
+            JOIN buildings b ON u.building_id = b.id
+            WHERE t.status = 'active'
+            AND :today BETWEEN tum.effective_from AND IFNULL(tum.effective_to, '2099-12-31')
+            ORDER BY b.name ASC, u.unit_name ASC";
+            
+    return $db->query($sql, [':today' => $today])->fetchAll();
+}
+
+
+/**
+ * Fetch all financial movements for a specific tenant
+ */
+
+
+
+
+/**
+ * Fetch all billing records for a tenant (Newest on top)
+ */
+function getTenantPaymentHistory($tenant_id) {
+    $db = DB::getInstance();
+    $sql = "SELECT id, billing_month, rent_amount, electricity_amount, adjustment_amount, created_at 
+            FROM billing 
+            WHERE tenant_id = ? 
+            ORDER BY created_at DESC";
+    return $db->fetchAll($sql, [$tenant_id]);
+}
+
+/**
+ * Update a specific billing row from the edit modal
+ */
+function updateBillPayment($data) {
+    $db = DB::getInstance();
+    $id = (int)$data['bill_id'];
+    
+    $updateData = [
+        'rent_amount'        => (float)($data['rent_amount'] ?? 0),
+        'electricity_amount' => (float)($data['electricity_amount'] ?? 0),
+        'adjustment_amount'  => (float)($data['adjustment_amount'] ?? 0),
+    ];
+
+    try {
+        $db->update('billing', $updateData, "id = :id", [':id' => $id]);
+        return ['status' => 'success', 'message' => 'Record updated successfully.'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Update failed: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Delete a billing row
+ */
+function deleteBill($id) {
+    $db = DB::getInstance();
+    try {
+        $db->delete('billing', "id = ?", [$id]);
+        return ['status' => 'success', 'message' => 'Record deleted successfully.'];
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => 'Deletion failed.'];
+    }
+}
+function getTenantById($id) {
+    $db = DB::getInstance();
+    $sql = "SELECT id, name FROM tenants WHERE id = ? LIMIT 1";
+    return $db->fetch($sql, [$id]);
+}
+?>

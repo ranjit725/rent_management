@@ -137,6 +137,10 @@ class DB {
         return $debugSql;
     }
 
+    public function inTransaction() { 
+        return $this->pdo->inTransaction(); 
+    }
+
 }
 
 ?>

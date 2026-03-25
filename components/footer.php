@@ -28,6 +28,12 @@ switch(basename($_SERVER['PHP_SELF'])) {
     case "meter_tenant_mapping.php":
         if(function_exists('meterTenantMappingJS')) meterTenantMappingJS();
         break;
+    case "billing.php":
+        if(function_exists('billingJS')) billingJS();
+        break;
+    case "tenant_history.php":
+        if(function_exists('tenantHistoryJS')) tenantHistoryJS();
+        break;
 }
 ?>
 

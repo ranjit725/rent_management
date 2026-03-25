@@ -104,7 +104,10 @@ function tenantsJS() {
             $('#tenantsTable').DataTable({
                 responsive: true,
                 scrollX: true,
-                autoWidth: false
+                autoWidth: false,
+    language: {
+        emptyTable: "No tenants found."
+    }
             });
         });
 
@@ -168,7 +171,10 @@ function metersJS() {
             $('#metersTable').DataTable({
                  responsive: true,
                 scrollX: true,
-                autoWidth: false
+                autoWidth: false,
+    language: {
+        emptyTable: "No Meter found."
+    }
             });
 
             // Handle form submission with AJAX
@@ -561,3 +567,166 @@ function meterTenantMappingJS() {
     <?php
 }
 ?>
+
+<?php
+
+/**
+ * JavaScript for the Billing page.
+ */
+function billingJS() {
+    ?>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.5.0/js/dataTables.responsive.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.5.0/js/responsive.bootstrap5.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            let table;
+
+            if ($('#billingDataTable').length) {
+                table = $('#billingDataTable').DataTable({
+                    responsive: true,
+                    dom: 'rtip', 
+                    "pageLength": 10,
+                    columnDefs: [
+                        { responsivePriority: 1, targets: 0 },
+                        { responsivePriority: 2, targets: 3 },
+                        { 
+                            targets: 0, 
+                            className: 'text-wrap',
+                            width: '40%' 
+                        }
+                    ],
+                    "language": {
+                        "paginate": {
+                            "previous": "Prev",
+                            "next": "Next"
+                        }
+                    }
+                });
+
+                $('#customTableSearch').on('keyup', function() {
+                    table.search(this.value).draw();
+                });
+
+                // --- THE FIX FOR ROTATION/RESIZE ---
+                // This triggers whenever the window size changes
+                $(window).on('resize orientationchange', function() {
+                    if (table) {
+                        table.columns.adjust().responsive.recalc();
+                    }
+                });
+            }
+            
+            $('#fifo_tenant_select').on('change', function() {
+                const tenantId = $(this).val();
+                const hintRent = $('#hint_rent');
+                const hintElec = $('#hint_elec');
+                
+                if(!tenantId) {
+                    hintRent.html('');
+                    hintElec.html('');
+                    return;
+                }
+
+                $.post('api/my_billing_api.php', { action: 'get_quick_summary', tenant_id: tenantId }, function(response) {
+                    try {
+                        const data = JSON.parse(response);
+                        
+                        // Rent Hint Logic
+                        let rentHtml = '';
+                        const rentTotal = String(data.rent.total);
+
+                        if (data.rent.is_advance) {
+                            rentHtml = '<span class="text-success">Advance: ' + rentTotal + '</span>';
+                        } else if (rentTotal === "Settled" || rentTotal === "₹0.00") {
+                            rentHtml = '<span class="text-success">Settled</span>';
+                        } else if (rentTotal === "Not Fixed") {
+                            rentHtml = '<span class="text-warning">Rent Not Fixed</span>';
+                        } else {
+                            rentHtml = '<span class="text-danger">Pending: ' + rentTotal + '</span>';
+                        }
+                        hintRent.html(rentHtml);
+
+                        // Elec Hint Logic
+                        let elecHtml = '';
+                        const elecTotal = String(data.elec.total);
+
+                        if (data.elec.is_advance) {
+                            elecHtml = '<span class="text-success">Advance: ' + elecTotal + '</span>';
+                        } else if (elecTotal === "Settled" || elecTotal === "₹0.00") {
+                            elecHtml = '<span class="text-success">Settled</span>';
+                        } else if (elecTotal === "No Meter") {
+                            elecHtml = '<span class="text-danger">No Meter Mapped</span>';
+                        } else {
+                            elecHtml = '<span class="text-danger">Pending: ' + elecTotal + '</span>';
+                        }
+                        hintElec.html(elecHtml);
+
+                    } catch (e) {
+                        console.error("Failed to parse billing summary:", e);
+                    }
+                });
+            });
+        });
+    </script>
+    <?php
+}
+?>
+<?php
+function tenantHistoryJS() {
+    ?>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.5.0/js/dataTables.responsive.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.5.0/js/responsive.bootstrap5.min.js"></script>
+    
+   <script>
+$(document).ready(function() {
+    // 1. Initialize DataTable with Alignment Fixes
+    if ($.fn.DataTable.isDataTable('#historyTable')) {
+        $('#historyTable').DataTable().destroy();
+    }
+
+    var table = $('#historyTable').DataTable({
+        responsive: true,
+        autoWidth: false,
+        order: [[4, 'desc']], // Entry Date column
+        // 'f' is search, 'p' is pagination. This wraps them in Bootstrap rows/cols
+        dom: '<"row"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6"f>>' +
+             '<"row"<"col-sm-12"tr>>' +
+             '<"row"<"col-sm-12 col-md-5"i><"col-sm-12 col-md-7"p>>',
+        language: {
+            search: "_INPUT_",
+            searchPlaceholder: "Search records..."
+        }
+    });
+
+    // 2. Event Delegation for the Edit Button
+    $('#historyTable tbody').on('click', '.edit-btn', function(e) {
+        e.preventDefault();
+        const data = $(this).data('item');
+        
+        // Fill fields
+        $('#edit_id').val(data.id);
+        $('#edit_rent').val(data.rent_amount);
+        $('#edit_elec').val(data.electricity_amount);
+        $('#edit_adj').val(data.adjustment_amount);
+
+        // Header Label
+        const d = new Date(data.billing_month);
+        const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        $('#modal_month_label').text(months[d.getMonth()] + " " + d.getFullYear());
+
+        // 3. Show Modal manually to avoid "double-trigger" grey screens
+        var myModal = new bootstrap.Modal(document.getElementById('editModal'));
+        myModal.show();
+    });
+});
+</script>
+
+
+    <?php
+}

@@ -148,50 +148,37 @@ unset($_SESSION['old_input']);
                         <tbody>
     <?php if (!empty($tenants)): ?>
         <?php foreach ($tenants as $t): ?>
-            <tr class="<?= $t['status'] === 'inactive' ? 'table-danger' : '' ?>">
-                <td>
-                    <?php if (!empty($t['id_proof'])): ?>
-                        <a href="uploads/id_proofs/<?= htmlspecialchars($t['id_proof']) ?>" target="_blank">
-                            <?= htmlspecialchars($t['id']) ?>
-                        </a>
-                    <?php else: ?>
-                        <?= htmlspecialchars($t['id']) ?>
-                    <?php endif; ?>
-                    </td>
+            <tr>
+                <!-- Column 1: ID -->
+                <td><?= htmlspecialchars($t['id']) ?></td>
+                <!-- Column 2: Name -->
                 <td><?= htmlspecialchars($t['name']) ?></td>
+                <!-- Column 3: Mobile -->
                 <td><?= htmlspecialchars($t['mobile']) ?></td>
+                <!-- Column 4: Current Unit -->
                 <td>
-                    <?php if ($t['unit_id']): ?>
-                        <strong><?= htmlspecialchars($t['building_name'] . ' - ' . $t['unit_name']) ?></strong>
-                        <br>
-                        <small class="text-muted">
-                            From: <?= htmlspecialchars(date('M j, Y', strtotime($t['effective_from']))) ?>
-                            <?php if ($t['effective_to']): ?>
-                                <br>To: <?= htmlspecialchars(date('M j, Y', strtotime($t['effective_to']))) ?>
-                                <span class="badge bg-danger ms-1">Past</span>
-                            <?php else: ?>
-                                <span class="badge bg-success ms-1">Current</span>
-                            <?php endif; ?>
-                        </small>
-                    <?php else: ?>
-                        <span class="text-muted">Not Assigned</span>
-                    <?php endif; ?>
+                    <?php 
+                    if ($t['unit_id']) {
+                        echo htmlspecialchars($t['building_name'] . ' - ' . $t['unit_name']);
+                    } else {
+                        echo 'Not Assigned';
+                    }
+                    ?>
                 </td>
+                <!-- Column 5: Actions -->
                 <td>
-                    <button class="btn btn-sm btn-warning" onclick="editTenant(<?= htmlspecialchars(json_encode($t)) ?>)">
+                    <button class="btn btn-sm btn-warning edit-tenant-btn" data-tenant="<?= htmlspecialchars(json_encode($t)) ?>">
                         <i class="fa fa-edit"></i>
                     </button>
-                    <a href="?action=delete&id=<?= (int)$t['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">
+                    <a href="?action=delete&id=<?= (int)$t['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure you want to delete this tenant?')">
                         <i class="fa fa-trash"></i>
                     </a>
                 </td>
             </tr>
         <?php endforeach; ?>
     <?php else: ?>
-        <tr>
-            <td colspan="5" class="text-center">No tenants found.</td>
-        </tr>
-    <?php endif; ?>
+<!-- Leave tbody empty -->
+<?php endif; ?>
 </tbody>
                     </table>
 

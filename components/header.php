@@ -23,6 +23,9 @@
 
     // Per-page CSS switch
     switch(basename($_SERVER['PHP_SELF'])) {
+        case "dashboard.php":
+            echo '<title>Dashboard</title>';
+            break;
         case "tenants.php":
             if (function_exists('tenantsCSS')) tenantsCSS();
             echo '<title>Tenants</title>';
@@ -55,6 +58,14 @@
         case "meter_tenant_mapping.php":
             if (function_exists('meterTenantMappingCSS')) meterTenantMappingCSS();
             echo '<title>Meter-Tenant Mapping</title>';
+            break;
+        case "billing.php":
+            if (function_exists('billingCSS')) billingCSS();
+            echo '<title>Billing</title>';
+            break;
+        case "tenant_history.php":
+            if (function_exists('tenantHistoryCSS')) tenantHistoryCSS();
+            echo '<title>Tenant History</title>';
             break;
         // Add more pages as needed
     }
